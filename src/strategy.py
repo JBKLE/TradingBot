@@ -20,7 +20,6 @@ class TradingStrategy:
     def validate_signal(
         self,
         analysis: AnalysisResult,
-        trades_today: int,
         open_positions_count: int,
         account_balance: float,
     ) -> ValidationResult:
@@ -32,11 +31,10 @@ class TradingStrategy:
         3. Direction is BUY or SELL (not NONE)
         4. Confidence >= MIN_CONFIDENCE_SCORE
         5. Risk/Reward >= MIN_RISK_REWARD_RATIO
-        6. No trade budget consumed today (max 1 per day)
-        7. No open position for the same asset
-        8. Inside the trade window (TRADE_WINDOW_START – TRADE_WINDOW_END)
-        9. Stop-loss distance <= MAX_RISK_PER_TRADE_PCT of account balance
-        10. Prices are non-zero (sanity check)
+        6. Open positions < MAX_OPEN_POSITIONS
+        7. Inside the trade window (TRADE_WINDOW_START – TRADE_WINDOW_END)
+        8. Stop-loss distance <= MAX_RISK_PER_TRADE_PCT of account balance
+        9. Prices are non-zero (sanity check)
         """
         opp = analysis.best_opportunity
 
@@ -61,16 +59,10 @@ class TradingStrategy:
                 reason=f"Risk/Reward {opp.risk_reward_ratio:.2f} < minimum {config.MIN_RISK_REWARD_RATIO}",
             )
 
-        if trades_today >= config.MAX_TRADES_PER_DAY:
+        if open_positions_count >= config.MAX_OPEN_POSITIONS:
             return ValidationResult(
                 valid=False,
-                reason=f"Daily trade limit reached ({trades_today}/{config.MAX_TRADES_PER_DAY})",
-            )
-
-        if open_positions_count > 0:
-            return ValidationResult(
-                valid=False,
-                reason=f"Already {open_positions_count} open position(s) – max 1",
+                reason=f"Max open positions reached ({open_positions_count}/{config.MAX_OPEN_POSITIONS})",
             )
 
         if not self._within_trade_window():

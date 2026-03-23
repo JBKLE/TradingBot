@@ -79,22 +79,7 @@ async def daily_routine() -> None:
                     profit_loss_pct=event["profit_loss_pct"],
                 )
 
-            # ── 3. Check daily trade budget ───────────────────────────────────
-            trades_today = await database.get_trades_today()
-            trades_today_count = len(trades_today)
-
-            if trades_today_count >= config.MAX_TRADES_PER_DAY:
-                logger.info(
-                    "Daily trade limit reached (%d/%d) – skipping analysis",
-                    trades_today_count,
-                    config.MAX_TRADES_PER_DAY,
-                )
-                await database.save_account_snapshot(
-                    account.balance, account.equity, len(open_broker_positions)
-                )
-                return
-
-            # ── 4. Fetch market data ──────────────────────────────────────────
+            # ── 3. Fetch market data ──────────────────────────────────────────
             market_data: dict[str, MarketData] = {}
             for asset_key, asset_info in config.WATCHLIST.items():
                 epic = asset_info["epic"]
@@ -134,7 +119,6 @@ async def daily_routine() -> None:
             strategy = TradingStrategy()
             validation = strategy.validate_signal(
                 analysis=analysis,
-                trades_today=trades_today_count,
                 open_positions_count=len(open_broker_positions),
                 account_balance=account.balance,
             )
@@ -205,10 +189,6 @@ async def monitor_positions() -> None:
     Alle 5 Minuten: Regelbasierter Check offener Positionen.
     Wird übersprungen wenn keine Position offen ist.
     """
-    open_trades = await database.get_open_trades()
-    if not open_trades:
-        return
-
     notifier = Notifier()
     analyzer = MarketAnalyzer()
 
@@ -345,7 +325,11 @@ async def run_scheduler() -> None:
         scheduler.get_job("daily_routine").next_run_time,
     )
 
+    # ── Startup-Sequenz: einmal direkt beim Start ──────────────────────────
+    logger.info("Running startup checks...")
+    await daily_routine()
     await monitor_positions()
+    await daily_summary()
 
     # Keep running until interrupted
     try:

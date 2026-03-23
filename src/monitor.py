@@ -101,9 +101,22 @@ class PositionMonitor:
     async def check_positions(self) -> list[MonitorAction]:
         """Alle offenen Trades prüfen und Aktionen zurückgeben."""
         actions: list[MonitorAction] = []
-        open_trades = await database.get_open_trades()
-        if not open_trades:
+
+        # Broker ist die Quelle der Wahrheit – erst prüfen ob überhaupt Positionen offen
+        broker_positions = await self._broker.get_open_positions()
+        if not broker_positions:
             return actions
+
+        open_trades = await database.get_open_trades()
+        trades_by_deal_id = {t.deal_id: t for t in open_trades if t.deal_id}
+
+        # Broker-Positionen ohne DB-Eintrag nur loggen
+        for pos in broker_positions:
+            if pos.deal_id not in trades_by_deal_id:
+                logger.warning(
+                    "Broker-Position %s (%s) nicht in DB – bitte Bot neu starten oder manuell eintragen",
+                    pos.deal_id, pos.epic,
+                )
 
         for trade in open_trades:
             try:
