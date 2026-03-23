@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  trading-bot:
+    build: .
+    container_name: commodities-trader
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data          # SQLite DB + logs (persisted on Synology)
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - TZ=Europe/Berlin
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
