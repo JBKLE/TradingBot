@@ -83,7 +83,7 @@ class Notifier:
         profit_loss_total: float,
     ) -> None:
         sign = "+" if profit_loss_total >= 0 else ""
-        title = f"Tagesübersicht: {trades_today} Trade(s), {sign}{profit_loss_total:.2f} EUR"
+        title = f"Tagesuebersicht: {trades_today} Trade(s), {sign}{profit_loss_total:.2f} EUR"
         body = f"Kontostand: {balance:.2f} EUR"
         await self._send(title, body, priority="default")
 

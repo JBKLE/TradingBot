@@ -56,6 +56,15 @@ LOG_DIR: str = os.path.join(DATA_DIR, "logs")
 NTFY_TOPIC: str = os.getenv("NTFY_TOPIC", "")
 NTFY_SERVER: str = os.getenv("NTFY_SERVER", "https://ntfy.sh")
 
+# ── News-Analyse ──────────────────────────────────────────────────────────────
+NEWS_API_KEY: str = os.getenv("NEWS_API_KEY", "")
+NEWS_FETCH_INTERVAL_SECONDS: int = int(os.getenv("NEWS_FETCH_INTERVAL_HOURS", "4")) * 3600
+NEWS_KEYWORDS: list[str] = [
+    "oil", "gold", "silver", "gas", "commodities",
+    "fed", "ecb", "tariff", "sanctions", "opec",
+    "inflation", "recession",
+]
+
 # ── Position Monitor ──────────────────────────────────────────────────────────
 TRAIL_TRIGGER_PCT: float = float(os.getenv("TRAIL_TRIGGER_PCT", "1.0"))
 TRAIL_DISTANCE_PCT: float = float(os.getenv("TRAIL_DISTANCE_PCT", "0.5"))

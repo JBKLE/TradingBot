@@ -11,6 +11,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from . import config, database
 from .analyzer import MarketAnalyzer
+from .news_analyzer import NewsAnalyzer
 from .broker import CapitalComBroker, CapitalComError
 from .executor import TradeExecutor
 from .models import MarketData, Recommendation
@@ -98,11 +99,15 @@ async def daily_routine() -> None:
                 return
 
             # ── 5. Claude analysis ────────────────────────────────────────────
+            news = NewsAnalyzer()
+            market_context = await news.get_market_context()
+
             analyzer = MarketAnalyzer()
             analysis = await analyzer.analyze_market(
                 market_data=market_data,
                 account_balance=account.balance,
                 open_positions=open_broker_positions,
+                market_context=market_context,
             )
             await database.save_analysis(analysis)
 

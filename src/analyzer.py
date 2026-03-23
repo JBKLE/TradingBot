@@ -2,6 +2,7 @@
 import json
 import logging
 from datetime import datetime
+from typing import Optional
 
 import anthropic
 
@@ -16,6 +17,7 @@ from .models import (
     PositionInfo,
     Recommendation,
 )
+from .news_analyzer import MarketContext
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,7 @@ class MarketAnalyzer:
         market_data: dict[str, MarketData],
         account_balance: float,
         open_positions: list[PositionInfo],
+        market_context: Optional[MarketContext] = None,
     ) -> AnalysisResult:
         """
         Send market data to Claude and receive a structured analysis.
@@ -83,7 +86,7 @@ class MarketAnalyzer:
         Uses adaptive thinking for deeper reasoning on complex market conditions.
         Streams the response to avoid HTTP timeouts.
         """
-        user_message = _build_user_message(market_data)
+        user_message = _build_user_message(market_data, market_context)
         system_prompt = _SYSTEM_PROMPT.format(
             current_date=datetime.now().strftime("%Y-%m-%d"),
             account_balance=f"{account_balance:.2f}",
@@ -220,7 +223,10 @@ Antworte AUSSCHLIESSLICH als valides JSON:
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _build_user_message(market_data: dict[str, MarketData]) -> str:
+def _build_user_message(
+    market_data: dict[str, MarketData],
+    market_context: Optional[MarketContext] = None,
+) -> str:
     lines = ["## Aktuelle Marktdaten\n"]
     for key, data in market_data.items():
         price = data.current_price
@@ -236,6 +242,9 @@ def _build_user_message(market_data: dict[str, MarketData]) -> str:
                     f"L={bar.low:.4f} C={bar.close:.4f}"
                 )
         lines.append("")
+    if market_context and not market_context.is_empty():
+        lines.append("\n" + market_context.to_prompt_text())
+
     return "\n".join(lines)
 
 
