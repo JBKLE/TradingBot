@@ -9,8 +9,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source
 COPY src/ ./src/
 
-# SQLite database and logs are persisted via a volume mount
-VOLUME /app/data
+# Ensure data directory exists
+RUN mkdir -p /app/data/logs
 
 ENV TZ=Europe/Berlin
 ENV PYTHONUNBUFFERED=1
