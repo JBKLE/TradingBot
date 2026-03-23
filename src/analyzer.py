@@ -75,10 +75,12 @@ _STYLE_HINTS = {
         "Stop-Loss und Take-Profit auf Basis markanter Tages-Levels."
     ),
     "intraday": (
-        "INTRADAY-TRADING (Haltedauer < 24h, kein Overnight) – "
+        "INTRADAY-TRADING (bevorzugt < 24h Haltedauer) – "
         "Fokus auf kurzfristige Impulse anhand von Stundenkerzen. "
         "Enge Stop-Losses, kleinere Take-Profits, schnelle Setups bevorzugen. "
-        "Keine Positionen über Nacht halten – lieber WAIT als zu spät einsteigen."
+        "Trades die abends noch offen sind können über Nacht laufen – "
+        "Swap-Kosten sind vertretbar wenn das Setup weiterhin intakt ist. "
+        "Kein Trade mehr nach {close_time} Uhr eröffnen."
     ),
 }
 
@@ -108,7 +110,9 @@ class MarketAnalyzer:
             account_balance=f"{account_balance:.2f}",
             open_positions=_format_open_positions(open_positions),
             max_risk_pct=config.MAX_RISK_PER_TRADE_PCT,
-            trading_style=_STYLE_HINTS.get(config.TRADING_STYLE, _STYLE_HINTS["swing"]),
+            trading_style=_STYLE_HINTS.get(
+                config.TRADING_STYLE, _STYLE_HINTS["swing"]
+            ).replace("{close_time}", config.TRADE_WINDOW_END),
         )
 
         logger.info("Requesting Claude market analysis (%d assets)...", len(market_data))

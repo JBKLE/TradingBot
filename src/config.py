@@ -44,6 +44,7 @@ WATCHLIST: dict[str, dict[str, str]] = {
 ANALYSIS_SCHEDULE: str = os.getenv("ANALYSIS_SCHEDULE", "0 8,12,16 * * 1-5")
 TRADE_WINDOW_START: str = os.getenv("TRADE_WINDOW_START", "09:00")
 TRADE_WINDOW_END: str = os.getenv("TRADE_WINDOW_END", "20:00")
+INTRADAY_CLOSE_TIME: str = os.getenv("INTRADAY_CLOSE_TIME", "21:30")
 TIMEZONE: str = os.getenv("TIMEZONE", "Europe/Berlin")
 TZ = ZoneInfo(TIMEZONE)
 

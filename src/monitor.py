@@ -20,6 +20,7 @@ class ActionType(str, Enum):
     BREAK_EVEN = "BREAK_EVEN"
     ALERT = "ALERT"
     ESCALATE_TO_CLAUDE = "ESCALATE_TO_CLAUDE"
+    CLOSE = "CLOSE"
 
 
 @dataclass
@@ -143,6 +144,12 @@ class PositionMonitor:
 
     def _evaluate_trade(self, trade: Trade, snapshot: PriceSnapshot) -> list[MonitorAction]:
         current = snapshot.bid if trade.direction == Direction.BUY else snapshot.ask
+
+        # Intraday: zwangsweise schließen vor Overnight
+        intraday_close = self._check_intraday_close(trade, current)
+        if intraday_close:
+            return [intraday_close]  # keine weiteren Checks nötig
+
         results = [
             self._check_trailing_stop(trade, current, snapshot),
             self._check_position_age(trade, current),
@@ -151,6 +158,21 @@ class PositionMonitor:
             self._check_spread(trade, snapshot),
         ]
         return [a for a in results if a is not None]
+
+    def _check_intraday_close(self, trade: Trade, current: float) -> Optional[MonitorAction]:
+        if config.TRADING_STYLE != "intraday":
+            return None
+        now = datetime.now(tz=config.TZ).time()
+        close_h, close_m = map(int, config.INTRADAY_CLOSE_TIME.split(":"))
+        from datetime import time as dt_time
+        if now >= dt_time(close_h, close_m):
+            return MonitorAction(
+                action_type=ActionType.CLOSE,
+                trade=trade,
+                reason=f"Intraday-Close: Position vor Overnight schließen (>{config.INTRADAY_CLOSE_TIME})",
+                urgency="high",
+            )
+        return None
 
     # ── Regel 1 & 2: Trailing Stop / Break-Even ────────────────────────────────
 
