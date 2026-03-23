@@ -23,7 +23,14 @@ services:
     container_name: commodities-dashboard
     restart: unless-stopped
     env_file: .env
-    command: python -m streamlit run dashboard.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true
+    command: >
+      python -m streamlit run dashboard.py
+      --server.port=8501
+      --server.address=0.0.0.0
+      --server.headless=true
+      --server.enableWebsocketCompression=false
+      --server.enableCORS=false
+      --server.enableXsrfProtection=false
     ports:
       - "8501:8501"
     volumes:

@@ -72,11 +72,6 @@ TRAIL_DISTANCE_PCT: float = float(os.getenv("TRAIL_DISTANCE_PCT", "0.5"))
 TRAIL_MIN_STEP: float = float(os.getenv("TRAIL_MIN_STEP", "5.0"))
 ESCALATION_MAX_PER_DAY: int = int(os.getenv("ESCALATION_MAX_PER_DAY", "2"))
 
-# ── Trade confirmation ─────────────────────────────────────────────────────────
-TRADE_CONFIRMATION_ENABLED: bool = os.getenv("TRADE_CONFIRMATION_ENABLED", "false").lower() == "true"
-TRADE_CONFIRMATION_TIMEOUT_MINUTES: int = int(os.getenv("TRADE_CONFIRMATION_TIMEOUT_MINUTES", "15"))
-NTFY_CONFIRM_TOPIC: str = os.getenv("NTFY_CONFIRM_TOPIC", "")
-
 # ── API rate limiting ──────────────────────────────────────────────────────────
 CAPITAL_MAX_REQUESTS_PER_HOUR: int = 1000
 CAPITAL_SESSION_TTL_SECONDS: int = 600  # 10 minutes

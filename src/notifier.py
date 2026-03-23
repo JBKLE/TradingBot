@@ -1,19 +1,11 @@
 """Push notifications via ntfy.sh."""
-import asyncio
 import logging
-import time
 from typing import Optional
-from urllib.parse import urlparse
 
 import httpx
 
 from . import config
-from .models import BestOpportunity, Trade, TradeStatus
-
-# Basis-URL für Confirm-Topic (nur Schema + Host, ohne Pfad)
-# z.B. https://ntfy.sh/TradingBot → https://ntfy.sh
-_parsed = urlparse(config.NTFY_SERVER)
-_NTFY_BASE = f"{_parsed.scheme}://{_parsed.netloc}"
+from .models import Trade, TradeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -98,79 +90,6 @@ class Notifier:
         body = error[:500]  # ntfy has message limits
         await self._send(title, body, priority="urgent")
 
-    async def request_trade_confirmation(self, opportunity: BestOpportunity) -> None:
-        """Send a confirmation request notification with trade details and action buttons."""
-        if not config.NTFY_CONFIRM_TOPIC:
-            logger.warning("NTFY_CONFIRM_TOPIC not set – cannot request confirmation")
-            return
-
-        title = (
-            f"Trade-Bestätigung: {opportunity.asset} {opportunity.direction.value} "
-            f"(Confidence {opportunity.confidence}/10)"
-        )
-        lines = [
-            f"Begründung: {opportunity.reasoning}",
-            "",
-            f"Entry: {opportunity.entry_price:.4f} | SL: {opportunity.stop_loss:.4f} | "
-            f"TP: {opportunity.take_profit:.4f} | RR: {opportunity.risk_reward_ratio:.2f}",
-        ]
-        if opportunity.key_events:
-            lines.append("Events: " + ", ".join(opportunity.key_events))
-        if opportunity.risks:
-            lines.append("Risiken: " + ", ".join(opportunity.risks))
-        body = "\n".join(lines)
-
-        confirm_url = f"{_NTFY_BASE}/{config.NTFY_CONFIRM_TOPIC}"
-        actions = (
-            f"http, Approve, {confirm_url}, method=POST, body=APPROVE; "
-            f"http, Reject, {confirm_url}, method=POST, body=REJECT"
-        )
-        await self._send(title, body, priority="high", extra_headers={"Actions": actions})
-
-    async def wait_for_confirmation(self, since: float) -> bool:
-        """
-        Poll the confirm topic for an APPROVE/REJECT response.
-        Returns True if approved, False if rejected or timed out.
-        """
-        if not config.NTFY_CONFIRM_TOPIC:
-            return False
-
-        timeout_seconds = config.TRADE_CONFIRMATION_TIMEOUT_MINUTES * 60
-        deadline = time.time() + timeout_seconds
-        poll_url = f"{_NTFY_BASE}/{config.NTFY_CONFIRM_TOPIC}/json?poll=1&since={int(since)}"
-        logger.info(
-            "Waiting for trade confirmation (timeout: %d min)...",
-            config.TRADE_CONFIRMATION_TIMEOUT_MINUTES,
-        )
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            while time.time() < deadline:
-                try:
-                    response = await client.get(poll_url)
-                    for line in response.text.splitlines():
-                        line = line.strip()
-                        if not line:
-                            continue
-                        import json as _json
-                        try:
-                            msg = _json.loads(line)
-                        except _json.JSONDecodeError:
-                            continue
-                        if msg.get("event") != "message":
-                            continue
-                        body = msg.get("message", "").strip().upper()
-                        if body == "APPROVE":
-                            logger.info("Trade confirmed by user")
-                            return True
-                        if body == "REJECT":
-                            logger.info("Trade rejected by user")
-                            return False
-                except Exception as exc:
-                    logger.warning("Confirmation poll error: %s", exc)
-                await asyncio.sleep(15)
-
-        logger.info("Confirmation timeout – skipping trade")
-        return False
-
     async def _send(self, title: str, body: str, priority: str = "default", extra_headers: Optional[dict] = None) -> None:
         if not self._enabled:
             logger.debug("Notification (skipped): %s – %s", title, body)
@@ -196,5 +115,10 @@ class Notifier:
 
 
 def _ascii_safe(text: str) -> str:
-    """ntfy title header must be ASCII-compatible."""
+    """ntfy title header must be ASCII-compatible. Transliterate German umlauts."""
+    text = (
+        text.replace("Ä", "Ae").replace("Ö", "Oe").replace("Ü", "Ue")
+            .replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
+            .replace("ß", "ss")
+    )
     return text.encode("ascii", errors="replace").decode("ascii")

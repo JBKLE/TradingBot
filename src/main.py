@@ -140,19 +140,6 @@ async def daily_routine() -> None:
                 )
                 return
 
-            # ── 6b. Request user confirmation (if enabled) ────────────────────
-            if config.TRADE_CONFIRMATION_ENABLED:
-                import time as _time
-                since = _time.time()
-                await notifier.request_trade_confirmation(analysis.best_opportunity)
-                approved = await notifier.wait_for_confirmation(since)
-                if not approved:
-                    logger.info("Trade not confirmed – skipping execution")
-                    await database.save_account_snapshot(
-                        account.balance, account.equity, len(open_broker_positions)
-                    )
-                    return
-
             # ── 7. Execute trade ──────────────────────────────────────────────
             signal = strategy.build_signal(analysis, account.balance)
             logger.info(

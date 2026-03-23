@@ -3,7 +3,7 @@ import glob
 import json
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -225,9 +225,34 @@ if not open_trades.empty:
         "timestamp", "asset", "direction", "entry_price",
         "stop_loss", "take_profit", "position_size", "confidence", "deal_id"
     ]].copy()
+
+    # Duration since position opened
+    now_utc = pd.Timestamp.now(tz="UTC")
+    ts_aware = display_open["timestamp"].dt.tz_localize("UTC") if display_open["timestamp"].dt.tz is None else display_open["timestamp"].dt.tz_convert("UTC")
+    delta = now_utc - ts_aware
+    display_open["offen_seit"] = delta.apply(
+        lambda d: f"{int(d.total_seconds()//3600)}h {int((d.total_seconds()%3600)//60)}m"
+    )
+
+    # Distance to SL / TP in %
+    display_open["zu_sl_pct"] = (
+        (display_open["entry_price"] - display_open["stop_loss"]).abs()
+        / display_open["entry_price"] * 100
+    ).apply(lambda x: f"{x:.2f}%")
+    display_open["zu_tp_pct"] = (
+        (display_open["take_profit"] - display_open["entry_price"]).abs()
+        / display_open["entry_price"] * 100
+    ).apply(lambda x: f"{x:.2f}%")
+
     display_open["timestamp"] = display_open["timestamp"].dt.strftime("%Y-%m-%d %H:%M")
-    display_open.columns = ["ZEIT", "ASSET", "RICHTUNG", "ENTRY", "SL", "TP", "SIZE", "CONF", "DEAL ID"]
+    display_open = display_open[[
+        "timestamp", "offen_seit", "asset", "direction", "entry_price",
+        "zu_sl_pct", "zu_tp_pct", "stop_loss", "take_profit",
+        "position_size", "confidence", "deal_id"
+    ]]
+    display_open.columns = ["ZEIT", "DAUER", "ASSET", "DIR", "ENTRY", "▼SL %", "▲TP %", "SL", "TP", "SIZE", "CONF", "DEAL ID"]
     st.dataframe(display_open, use_container_width=True, hide_index=True)
+    st.caption("Aktueller Kurs nicht in DB verfügbar – ▼SL % / ▲TP % zeigen Abstand vom Entry.")
 else:
     st.markdown("*Keine offenen Positionen.*")
 
@@ -254,7 +279,9 @@ if not trades.empty:
         filtered = filtered[filtered["status"] == status_filter]
     if days != "Alle":
         d = int(days.split()[0])
-        filtered = filtered[filtered["timestamp"] >= datetime.now() - timedelta(days=d)]
+        cutoff = pd.Timestamp.now(tz="UTC") - timedelta(days=d)
+        ts_col = filtered["timestamp"].dt.tz_localize("UTC") if filtered["timestamp"].dt.tz is None else filtered["timestamp"].dt.tz_convert("UTC")
+        filtered = filtered[ts_col >= cutoff]
 
     display = filtered[[
         "timestamp", "asset", "direction", "entry_price", "exit_price",
