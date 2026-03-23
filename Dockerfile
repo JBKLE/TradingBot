@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source
 COPY src/ ./src/
+COPY dashboard.py .
 
 # Ensure data directory exists
 RUN mkdir -p /app/data/logs

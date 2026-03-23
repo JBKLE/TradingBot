@@ -22,6 +22,7 @@ class TradingStrategy:
         analysis: AnalysisResult,
         open_positions_count: int,
         account_balance: float,
+        open_positions: list | None = None,
     ) -> ValidationResult:
         """
         Returns (valid=True) if ALL conditions pass:
@@ -64,6 +65,16 @@ class TradingStrategy:
                 valid=False,
                 reason=f"Max open positions reached ({open_positions_count}/{config.MAX_OPEN_POSITIONS})",
             )
+
+        # Kein zweiter Trade auf dasselbe Asset
+        if open_positions:
+            epic = config.WATCHLIST.get(opp.asset, {}).get("epic", opp.asset)
+            already_open = [p for p in open_positions if p.epic == epic]
+            if already_open:
+                return ValidationResult(
+                    valid=False,
+                    reason=f"{opp.asset} hat bereits eine offene Position",
+                )
 
         if not self._within_trade_window():
             return ValidationResult(

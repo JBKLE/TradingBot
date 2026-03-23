@@ -3,11 +3,17 @@ import asyncio
 import logging
 import time
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 
 from . import config
 from .models import BestOpportunity, Trade, TradeStatus
+
+# Basis-URL für Confirm-Topic (nur Schema + Host, ohne Pfad)
+# z.B. https://ntfy.sh/TradingBot → https://ntfy.sh
+_parsed = urlparse(config.NTFY_SERVER)
+_NTFY_BASE = f"{_parsed.scheme}://{_parsed.netloc}"
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +120,7 @@ class Notifier:
             lines.append("Risiken: " + ", ".join(opportunity.risks))
         body = "\n".join(lines)
 
-        confirm_url = f"{config.NTFY_SERVER.rstrip('/')}/{config.NTFY_CONFIRM_TOPIC}"
+        confirm_url = f"{_NTFY_BASE}/{config.NTFY_CONFIRM_TOPIC}"
         actions = (
             f"http, Approve, {confirm_url}, method=POST, body=APPROVE; "
             f"http, Reject, {confirm_url}, method=POST, body=REJECT"
@@ -131,10 +137,7 @@ class Notifier:
 
         timeout_seconds = config.TRADE_CONFIRMATION_TIMEOUT_MINUTES * 60
         deadline = time.time() + timeout_seconds
-        poll_url = (
-            f"{config.NTFY_SERVER.rstrip('/')}/{config.NTFY_CONFIRM_TOPIC}/json"
-            f"?poll=1&since={int(since)}"
-        )
+        poll_url = f"{_NTFY_BASE}/{config.NTFY_CONFIRM_TOPIC}/json?poll=1&since={int(since)}"
         logger.info(
             "Waiting for trade confirmation (timeout: %d min)...",
             config.TRADE_CONFIRMATION_TIMEOUT_MINUTES,

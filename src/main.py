@@ -126,6 +126,7 @@ async def daily_routine() -> None:
                 analysis=analysis,
                 open_positions_count=len(open_broker_positions),
                 account_balance=account.balance,
+                open_positions=open_broker_positions,
             )
 
             if not validation.valid:
