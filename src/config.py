@@ -80,7 +80,14 @@ NTFY_CONFIRM_TOPIC: str = os.getenv("NTFY_CONFIRM_TOPIC", "")
 CAPITAL_MAX_REQUESTS_PER_HOUR: int = 1000
 CAPITAL_SESSION_TTL_SECONDS: int = 600  # 10 minutes
 
+# ── Trading Style ──────────────────────────────────────────────────────────────
+# "swing"   → Tageskerzen, 30 Bars, mittelfristige Trends (Standard)
+# "intraday" → Stundenkerzen, 48 Bars, kurze Trades ohne Overnight-Gebühren
+TRADING_STYLE: str = os.getenv("TRADING_STYLE", "swing").lower()
+
 # ── Price history ──────────────────────────────────────────────────────────────
 PRICE_HISTORY_DAYS: int = 7
-PRICE_HISTORY_RESOLUTION: str = "DAY"
-PRICE_HISTORY_MAX_BARS: int = 30
+_default_resolution = "HOUR" if TRADING_STYLE == "intraday" else "DAY"
+_default_bars = 48 if TRADING_STYLE == "intraday" else 30
+PRICE_HISTORY_RESOLUTION: str = os.getenv("PRICE_HISTORY_RESOLUTION", _default_resolution)
+PRICE_HISTORY_MAX_BARS: int = int(os.getenv("PRICE_HISTORY_MAX_BARS", str(_default_bars)))
