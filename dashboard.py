@@ -417,7 +417,7 @@ for _col, (_label, _key, _endpoint, _timeout) in zip(
                     unsafe_allow_html=True,
                 )
 
-        if st.button(f"TESTEN", use_container_width=True, key=_key):
+        if st.button(_label, use_container_width=True, key=_key):
             with st.spinner(f"Teste {_label}..."):
                 try:
                     _resp = httpx.post(f"{BOT_API_URL}{_endpoint}", timeout=_timeout)

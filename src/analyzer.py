@@ -143,7 +143,7 @@ class MarketAnalyzer:
         if learning_ctx:
             system_prompt += learning_ctx
 
-        logger.info("Requesting Claude market analysis (%d assets)...", len(market_data))
+        logger.info("Requesting Claude market analysis (%d assets, model=%s)...", len(market_data), config.CLAUDE_MODEL)
 
         raw_text = ""
         usage_input = 0
@@ -212,7 +212,7 @@ class MarketAnalyzer:
             duration=f"{duration_h:.1f}h",
             escalation_reason=escalation_reason,
         )
-        logger.info("Escalating position %s to Claude: %s", trade.id, escalation_reason)
+        logger.info("Escalating position %s to Claude (model=%s): %s", trade.id, config.CLAUDE_MODEL, escalation_reason)
 
         raw_text = ""
         async with self._client.messages.stream(
@@ -280,7 +280,7 @@ class MarketAnalyzer:
             price_history_after=history_str,
         )
 
-        logger.info("Requesting trade review for Trade %s (%s)...", trade.id, trade.asset)
+        logger.info("Requesting trade review for Trade %s (%s, model=%s)...", trade.id, trade.asset, config.CLAUDE_MODEL)
 
         raw_text = ""
         async with self._client.messages.stream(
@@ -365,7 +365,7 @@ class MarketAnalyzer:
             market_data_text="\n".join(market_lines),
         )
 
-        logger.info("Sende %d Recheck(s) an Claude...", len(rechecks))
+        logger.info("Sende %d Recheck(s) an Claude (model=%s)...", len(rechecks), config.CLAUDE_MODEL)
 
         raw_text = ""
         async with self._client.messages.stream(
@@ -438,7 +438,7 @@ class MarketAnalyzer:
             stats_summary=stats_text,
         )
 
-        logger.info("Requesting %s-Zusammenfassung...", period)
+        logger.info("Requesting %s-Zusammenfassung (model=%s)...", period, config.CLAUDE_MODEL)
         raw_text = ""
         async with self._client.messages.stream(
             model=config.CLAUDE_MODEL,
