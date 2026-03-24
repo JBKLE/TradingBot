@@ -382,59 +382,58 @@ st.markdown("---")
 
 # ── API Tests ─────────────────────────────────────────────────────────────
 st.markdown("### ◈ API TESTS")
+
+# Persist test results in session state
+if "api_test_results" not in st.session_state:
+    st.session_state.api_test_results = {}
+
+_api_tests = [
+    ("CAPITAL.COM", "test_capital", "/api/test/capital", 30),
+    ("CLAUDE API", "test_anthropic", "/api/test/anthropic", 30),
+    ("NTFY.SH", "test_ntfy", "/api/test/ntfy", 15),
+    ("NEWS API", "test_news", "/api/test/news", 15),
+]
+
 col_t1, col_t2, col_t3, col_t4 = st.columns(4)
+for _col, (_label, _key, _endpoint, _timeout) in zip(
+    [col_t1, col_t2, col_t3, col_t4], _api_tests
+):
+    with _col:
+        # Show colored status from previous test
+        _prev = st.session_state.api_test_results.get(_key)
+        if _prev is not None:
+            if _prev["status"] == "ok":
+                st.markdown(
+                    f'<div style="background:#002200;border:1px solid #00ff41;border-radius:4px;'
+                    f'padding:8px;margin-bottom:8px;font-size:0.8rem;color:#00ff41;">'
+                    f'{_label}: OK ({_prev["latency_ms"]}ms)</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f'<div style="background:#220000;border:1px solid #ff4444;border-radius:4px;'
+                    f'padding:8px;margin-bottom:8px;font-size:0.8rem;color:#ff4444;">'
+                    f'{_label}: FEHLER</div>',
+                    unsafe_allow_html=True,
+                )
 
-with col_t1:
-    if st.button("CAPITAL.COM", use_container_width=True, key="test_capital"):
-        with st.spinner("Teste Capital.com..."):
-            try:
-                resp = httpx.post(f"{BOT_API_URL}/api/test/capital", timeout=30)
-                r = resp.json()
-                if r.get("status") == "ok":
-                    st.success(f"{r['message']} ({r['latency_ms']}ms)")
-                else:
-                    st.error(f"{r['message']} ({r['latency_ms']}ms)")
-            except Exception as e:
-                st.error(f"Bot-API nicht erreichbar: {e}")
-
-with col_t2:
-    if st.button("CLAUDE API", use_container_width=True, key="test_anthropic"):
-        with st.spinner("Teste Anthropic..."):
-            try:
-                resp = httpx.post(f"{BOT_API_URL}/api/test/anthropic", timeout=30)
-                r = resp.json()
-                if r.get("status") == "ok":
-                    st.success(f"{r['message']} ({r['latency_ms']}ms)")
-                else:
-                    st.error(f"{r['message']} ({r['latency_ms']}ms)")
-            except Exception as e:
-                st.error(f"Bot-API nicht erreichbar: {e}")
-
-with col_t3:
-    if st.button("NTFY.SH", use_container_width=True, key="test_ntfy"):
-        with st.spinner("Teste ntfy..."):
-            try:
-                resp = httpx.post(f"{BOT_API_URL}/api/test/ntfy", timeout=15)
-                r = resp.json()
-                if r.get("status") == "ok":
-                    st.success(f"{r['message']} ({r['latency_ms']}ms)")
-                else:
-                    st.error(r["message"])
-            except Exception as e:
-                st.error(f"Bot-API nicht erreichbar: {e}")
-
-with col_t4:
-    if st.button("NEWS API", use_container_width=True, key="test_news"):
-        with st.spinner("Teste NewsAPI..."):
-            try:
-                resp = httpx.post(f"{BOT_API_URL}/api/test/news", timeout=15)
-                r = resp.json()
-                if r.get("status") == "ok":
-                    st.success(f"{r['message']} ({r['latency_ms']}ms)")
-                else:
-                    st.error(r["message"])
-            except Exception as e:
-                st.error(f"Bot-API nicht erreichbar: {e}")
+        if st.button(f"TESTEN", use_container_width=True, key=_key):
+            with st.spinner(f"Teste {_label}..."):
+                try:
+                    _resp = httpx.post(f"{BOT_API_URL}{_endpoint}", timeout=_timeout)
+                    _r = _resp.json()
+                    st.session_state.api_test_results[_key] = _r
+                    if _r.get("status") == "ok":
+                        st.success(f"{_r['message']} ({_r['latency_ms']}ms)")
+                    else:
+                        st.error(_r.get("message", "Unbekannter Fehler"))
+                except Exception as _e:
+                    st.session_state.api_test_results[_key] = {
+                        "status": "error", "latency_ms": 0,
+                        "message": f"Bot-API nicht erreichbar: {_e}",
+                    }
+                    st.error(f"Bot-API nicht erreichbar: {_e}")
+                st.rerun()
 
 st.markdown("---")
 
