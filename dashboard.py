@@ -380,6 +380,64 @@ with col_b4:
 
 st.markdown("---")
 
+# ── API Tests ─────────────────────────────────────────────────────────────
+st.markdown("### ◈ API TESTS")
+col_t1, col_t2, col_t3, col_t4 = st.columns(4)
+
+with col_t1:
+    if st.button("CAPITAL.COM", use_container_width=True, key="test_capital"):
+        with st.spinner("Teste Capital.com..."):
+            try:
+                resp = httpx.post(f"{BOT_API_URL}/api/test/capital", timeout=30)
+                r = resp.json()
+                if r.get("status") == "ok":
+                    st.success(f"{r['message']} ({r['latency_ms']}ms)")
+                else:
+                    st.error(f"{r['message']} ({r['latency_ms']}ms)")
+            except Exception as e:
+                st.error(f"Bot-API nicht erreichbar: {e}")
+
+with col_t2:
+    if st.button("CLAUDE API", use_container_width=True, key="test_anthropic"):
+        with st.spinner("Teste Anthropic..."):
+            try:
+                resp = httpx.post(f"{BOT_API_URL}/api/test/anthropic", timeout=30)
+                r = resp.json()
+                if r.get("status") == "ok":
+                    st.success(f"{r['message']} ({r['latency_ms']}ms)")
+                else:
+                    st.error(f"{r['message']} ({r['latency_ms']}ms)")
+            except Exception as e:
+                st.error(f"Bot-API nicht erreichbar: {e}")
+
+with col_t3:
+    if st.button("NTFY.SH", use_container_width=True, key="test_ntfy"):
+        with st.spinner("Teste ntfy..."):
+            try:
+                resp = httpx.post(f"{BOT_API_URL}/api/test/ntfy", timeout=15)
+                r = resp.json()
+                if r.get("status") == "ok":
+                    st.success(f"{r['message']} ({r['latency_ms']}ms)")
+                else:
+                    st.error(r["message"])
+            except Exception as e:
+                st.error(f"Bot-API nicht erreichbar: {e}")
+
+with col_t4:
+    if st.button("NEWS API", use_container_width=True, key="test_news"):
+        with st.spinner("Teste NewsAPI..."):
+            try:
+                resp = httpx.post(f"{BOT_API_URL}/api/test/news", timeout=15)
+                r = resp.json()
+                if r.get("status") == "ok":
+                    st.success(f"{r['message']} ({r['latency_ms']}ms)")
+                else:
+                    st.error(r["message"])
+            except Exception as e:
+                st.error(f"Bot-API nicht erreichbar: {e}")
+
+st.markdown("---")
+
 # ── Pending Rechecks ──────────────────────────────────────────────────────
 rechecks_df = query(
     "SELECT * FROM pending_rechecks WHERE status = 'PENDING' ORDER BY recheck_at ASC"

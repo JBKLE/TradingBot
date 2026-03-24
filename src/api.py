@@ -1,8 +1,10 @@
 """FastAPI-Server fuer Dashboard-Buttons und Bot-Steuerung."""
 import logging
 import os
+import time
 from datetime import datetime
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -282,6 +284,145 @@ def create_api() -> FastAPI:
             }
         except Exception as exc:
             raise HTTPException(500, str(exc))
+
+    # ── POST /api/test/capital ───────────────────────────────────────
+    @app.post("/api/test/capital")
+    async def test_capital_api():
+        """Testet die Capital.com API-Verbindung (Session + Account-Abfrage)."""
+        t0 = time.time()
+        try:
+            async with CapitalComBroker() as broker:
+                account = await broker.get_account_balance()
+                latency_ms = int((time.time() - t0) * 1000)
+                return {
+                    "status": "ok",
+                    "latency_ms": latency_ms,
+                    "demo": config.CAPITAL_DEMO,
+                    "balance": account.balance,
+                    "currency": account.currency,
+                    "message": f"Verbunden – Balance: {account.balance:.2f} {account.currency}",
+                }
+        except CapitalComError as exc:
+            latency_ms = int((time.time() - t0) * 1000)
+            return {
+                "status": "error",
+                "latency_ms": latency_ms,
+                "message": f"Capital.com Fehler: {exc}",
+            }
+        except Exception as exc:
+            latency_ms = int((time.time() - t0) * 1000)
+            return {
+                "status": "error",
+                "latency_ms": latency_ms,
+                "message": f"Verbindung fehlgeschlagen: {exc}",
+            }
+
+    # ── POST /api/test/anthropic ─────────────────────────────────────
+    @app.post("/api/test/anthropic")
+    async def test_anthropic_api():
+        """Testet die Anthropic Claude API (kurzer Ping-Request)."""
+        t0 = time.time()
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+            response = client.messages.create(
+                model=config.CLAUDE_MODEL,
+                max_tokens=10,
+                messages=[{"role": "user", "content": "Antworte nur mit: OK"}],
+            )
+            latency_ms = int((time.time() - t0) * 1000)
+            text = response.content[0].text if response.content else ""
+            return {
+                "status": "ok",
+                "latency_ms": latency_ms,
+                "model": config.CLAUDE_MODEL,
+                "message": f"Claude antwortet: {text}",
+            }
+        except Exception as exc:
+            latency_ms = int((time.time() - t0) * 1000)
+            return {
+                "status": "error",
+                "latency_ms": latency_ms,
+                "message": f"Anthropic Fehler: {exc}",
+            }
+
+    # ── POST /api/test/ntfy ──────────────────────────────────────────
+    @app.post("/api/test/ntfy")
+    async def test_ntfy_api():
+        """Testet die ntfy.sh Notification API (sendet Test-Nachricht)."""
+        t0 = time.time()
+        if not config.NTFY_TOPIC:
+            return {
+                "status": "error",
+                "latency_ms": 0,
+                "message": "NTFY_TOPIC nicht konfiguriert",
+            }
+        try:
+            url = f"{config.NTFY_SERVER.rstrip('/')}/{config.NTFY_TOPIC}"
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    url,
+                    content="API-Test vom Dashboard".encode("utf-8"),
+                    headers={
+                        "Title": "TradingBot API-Test",
+                        "Priority": "low",
+                        "Tags": "white_check_mark",
+                    },
+                )
+                resp.raise_for_status()
+            latency_ms = int((time.time() - t0) * 1000)
+            return {
+                "status": "ok",
+                "latency_ms": latency_ms,
+                "topic": config.NTFY_TOPIC,
+                "message": f"Test-Nachricht gesendet an {config.NTFY_TOPIC}",
+            }
+        except Exception as exc:
+            latency_ms = int((time.time() - t0) * 1000)
+            return {
+                "status": "error",
+                "latency_ms": latency_ms,
+                "message": f"ntfy Fehler: {exc}",
+            }
+
+    # ── POST /api/test/news ──────────────────────────────────────────
+    @app.post("/api/test/news")
+    async def test_news_api():
+        """Testet die NewsAPI-Verbindung."""
+        t0 = time.time()
+        if not config.NEWS_API_KEY:
+            return {
+                "status": "error",
+                "latency_ms": 0,
+                "message": "NEWS_API_KEY nicht konfiguriert",
+            }
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://newsapi.org/v2/top-headlines",
+                    params={
+                        "apiKey": config.NEWS_API_KEY,
+                        "category": "business",
+                        "pageSize": 1,
+                        "language": "en",
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            latency_ms = int((time.time() - t0) * 1000)
+            total = data.get("totalResults", 0)
+            return {
+                "status": "ok",
+                "latency_ms": latency_ms,
+                "message": f"NewsAPI erreichbar – {total} Artikel verfuegbar",
+            }
+        except Exception as exc:
+            latency_ms = int((time.time() - t0) * 1000)
+            return {
+                "status": "error",
+                "latency_ms": latency_ms,
+                "message": f"NewsAPI Fehler: {exc}",
+            }
 
     # ── GET /api/settings ────────────────────────────────────────────
     @app.get("/api/settings")
