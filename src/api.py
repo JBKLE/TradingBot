@@ -1,13 +1,16 @@
 """FastAPI-Server fuer Dashboard-Buttons und Bot-Steuerung."""
 import logging
+import os
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from . import config, database
 from .analyzer import MarketAnalyzer
 from .broker import CapitalComBroker, CapitalComError
+from .env_writer import read_env_file, update_env_file
 from .indicators import calculate_all
 from .news_analyzer import NewsAnalyzer
 
@@ -278,6 +281,111 @@ def create_api() -> FastAPI:
                 "unreviewed_trade_ids": [t.id for t in unreviewed],
             }
         except Exception as exc:
+            raise HTTPException(500, str(exc))
+
+    # ── GET /api/settings ────────────────────────────────────────────
+    @app.get("/api/settings")
+    async def get_settings():
+        """Aktuelle Einstellungen mit Schema fuer Dashboard-UI."""
+        try:
+            env_values = read_env_file()
+            settings: list[dict] = []
+            for s in config.SETTINGS_SCHEMA:
+                key = s["key"]
+                # Current live value from config module
+                live_value = getattr(config, key, None)
+                # Value from .env file (may differ from live if not yet reloaded)
+                env_value = env_values.get(key)
+
+                entry = {**s, "value": live_value}
+                if env_value is not None:
+                    entry["env_value"] = env_value
+                settings.append(entry)
+
+            return {"settings": settings}
+        except Exception as exc:
+            logger.exception("Failed to read settings: %s", exc)
+            raise HTTPException(500, str(exc))
+
+    # ── POST /api/settings ───────────────────────────────────────────
+    class SettingsUpdate(BaseModel):
+        updates: dict[str, str | int | float | bool]
+
+    @app.post("/api/settings")
+    async def update_settings(body: SettingsUpdate):
+        """Einstellungen aendern, in .env speichern und Config neu laden."""
+        try:
+            # Build set of allowed keys from schema
+            schema_keys = {s["key"] for s in config.SETTINGS_SCHEMA}
+            schema_map = {s["key"]: s for s in config.SETTINGS_SCHEMA}
+
+            errors: list[str] = []
+            env_updates: dict[str, str] = {}
+
+            for key, value in body.updates.items():
+                if key not in schema_keys:
+                    errors.append(f"Unbekannter Key: {key}")
+                    continue
+
+                schema = schema_map[key]
+                stype = schema["type"]
+
+                # Validate and convert to string for .env
+                try:
+                    if stype == "bool":
+                        str_val = "true" if value else "false"
+                    elif stype == "int":
+                        int_val = int(value)
+                        if "min" in schema and int_val < schema["min"]:
+                            errors.append(f"{key}: min {schema['min']}")
+                            continue
+                        if "max" in schema and int_val > schema["max"]:
+                            errors.append(f"{key}: max {schema['max']}")
+                            continue
+                        str_val = str(int_val)
+                    elif stype == "float":
+                        float_val = float(value)
+                        if "min" in schema and float_val < schema["min"]:
+                            errors.append(f"{key}: min {schema['min']}")
+                            continue
+                        if "max" in schema and float_val > schema["max"]:
+                            errors.append(f"{key}: max {schema['max']}")
+                            continue
+                        str_val = str(float_val)
+                    elif stype == "select":
+                        str_val = str(value)
+                        if str_val not in schema.get("options", []):
+                            errors.append(f"{key}: muss einer von {schema['options']} sein")
+                            continue
+                    else:
+                        str_val = str(value)
+                except (ValueError, TypeError) as exc:
+                    errors.append(f"{key}: ungueltig ({exc})")
+                    continue
+
+                env_updates[key] = str_val
+
+            if errors:
+                raise HTTPException(400, detail={"errors": errors})
+
+            if not env_updates:
+                return {"status": "ok", "changed": 0}
+
+            # Write to .env and reload config
+            update_env_file(env_updates)
+            config.reload()
+
+            logger.info("Settings updated: %s", list(env_updates.keys()))
+            return {
+                "status": "ok",
+                "changed": len(env_updates),
+                "keys": list(env_updates.keys()),
+            }
+
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Failed to update settings: %s", exc)
             raise HTTPException(500, str(exc))
 
     return app
