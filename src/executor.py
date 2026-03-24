@@ -1,4 +1,5 @@
 """Trade execution – opens positions and monitors them."""
+import asyncio
 import logging
 from datetime import datetime
 
@@ -7,10 +8,6 @@ from .broker import CapitalComBroker
 from .models import Direction, Trade, TradeResult, TradeSignal, TradeStatus
 
 logger = logging.getLogger(__name__)
-
-# Maximum acceptable price slippage before aborting the trade
-MAX_SLIPPAGE_PCT = 0.5
-
 
 class TradeExecutor:
     """Executes validated trade signals via the Capital.com API."""
@@ -35,11 +32,38 @@ class TradeExecutor:
         current_price = market.current_price.ask if signal.direction == Direction.BUY else market.current_price.bid
 
         if signal.entry_price > 0:
-            slippage_pct = abs(current_price - signal.entry_price) / signal.entry_price * 100
-            if slippage_pct > MAX_SLIPPAGE_PCT:
+            slippage_abs = abs(current_price - signal.entry_price)
+            max_slip_abs = config.MAX_SLIPPAGE_ABS.get(signal.asset)
+            if max_slip_abs is not None:
+                # Asset-spezifischer absoluter Slippage-Check
+                if slippage_abs > max_slip_abs:
+                    msg = (
+                        f"Slippage too high: expected {signal.entry_price:.4f}, "
+                        f"current {current_price:.4f} "
+                        f"(diff={slippage_abs:.4f} > max={max_slip_abs} for {signal.asset})"
+                    )
+                    logger.warning(msg)
+                    return TradeResult(success=False, error=msg)
+            else:
+                # Fallback: prozentualer Check
+                slippage_pct = slippage_abs / signal.entry_price * 100
+                if slippage_pct > config.MAX_SLIPPAGE_PCT_DEFAULT:
+                    msg = (
+                        f"Slippage too high: expected {signal.entry_price:.4f}, "
+                        f"current {current_price:.4f} ({slippage_pct:.2f}%)"
+                    )
+                    logger.warning(msg)
+                    return TradeResult(success=False, error=msg)
+
+        # ── 1b. Spread-Check: illiquide Maerkte meiden ────────────────────────
+        spread = market.current_price.ask - market.current_price.bid
+        sl_distance = abs(signal.entry_price - signal.stop_loss)
+        if sl_distance > 0 and spread > 0:
+            spread_to_sl = spread / sl_distance
+            if spread_to_sl > 0.3:
                 msg = (
-                    f"Slippage too high: expected {signal.entry_price:.4f}, "
-                    f"current {current_price:.4f} ({slippage_pct:.2f}%)"
+                    f"Spread zu hoch relativ zum SL: Spread={spread:.4f}, "
+                    f"SL-Distanz={sl_distance:.4f} ({spread_to_sl:.0%}) – illiquider Markt"
                 )
                 logger.warning(msg)
                 return TradeResult(success=False, error=msg)
@@ -71,6 +95,42 @@ class TradeExecutor:
                 logger.warning("Could not confirm trade deal_id: %s – using dealReference", exc)
                 deal_id = deal_reference
 
+        # ── Deal-ID Verifizierung: echte Broker-Position-ID ermitteln ─────────
+        # Capital.com vergibt oft eine andere dealId in der Positionsliste als im Confirm.
+        # Retry-Loop: Capital.com braucht manchmal >1s bis die Position sichtbar ist.
+        actual_deal_id = deal_id
+        verified = False
+        for verify_attempt in range(3):
+            try:
+                await asyncio.sleep(1 + verify_attempt)  # 1s, 2s, 3s
+                positions = await self._broker.get_open_positions()
+                for pos in positions:
+                    if pos.epic == signal.epic and pos.direction.value == signal.direction.value:
+                        price_diff = abs(pos.entry_price - actual_entry) / actual_entry if actual_entry else 0
+                        if price_diff < 0.02:  # 2% Toleranz
+                            if pos.deal_id != actual_deal_id:
+                                logger.info(
+                                    "Deal-ID korrigiert (Versuch %d): confirm=%s → broker=%s",
+                                    verify_attempt + 1, actual_deal_id, pos.deal_id,
+                                )
+                            actual_deal_id = pos.deal_id
+                            verified = True
+                            break
+                if verified:
+                    break
+            except Exception as exc:
+                logger.warning(
+                    "Deal-ID Verifikation Versuch %d fehlgeschlagen: %s",
+                    verify_attempt + 1, exc,
+                )
+
+        if not verified:
+            logger.warning(
+                "Deal-ID konnte nach 3 Versuchen nicht verifiziert werden – "
+                "verwende ID aus Confirm: %s (wird beim naechsten Monitor-Lauf korrigiert)",
+                actual_deal_id,
+            )
+
         # ── 3. Persist to database ────────────────────────────────────────────
         trade = Trade(
             timestamp=datetime.now(tz=config.TZ),
@@ -83,7 +143,7 @@ class TradeExecutor:
             position_size=signal.position_size,
             confidence=signal.confidence,
             reasoning=signal.reasoning,
-            deal_id=deal_id,
+            deal_id=actual_deal_id,
             status=TradeStatus.OPEN,
         )
         trade.id = await database.save_trade(trade)
@@ -96,9 +156,9 @@ class TradeExecutor:
             actual_entry,
             signal.stop_loss,
             signal.take_profit,
-            deal_id,
+            actual_deal_id,
         )
-        return TradeResult(success=True, deal_id=deal_id, trade=trade)
+        return TradeResult(success=True, deal_id=actual_deal_id, trade=trade)
 
     async def monitor_open_positions(self) -> list[dict]:
         """

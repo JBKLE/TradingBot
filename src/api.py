@@ -1,0 +1,283 @@
+"""FastAPI-Server fuer Dashboard-Buttons und Bot-Steuerung."""
+import logging
+from datetime import datetime
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
+from . import config, database
+from .analyzer import MarketAnalyzer
+from .broker import CapitalComBroker, CapitalComError
+from .indicators import calculate_all
+from .news_analyzer import NewsAnalyzer
+
+logger = logging.getLogger(__name__)
+
+
+def create_api() -> FastAPI:
+    """Erstellt die FastAPI-App mit allen Endpunkten."""
+    app = FastAPI(title="TradingBot API", version="1.0")
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # ── GET /api/status ─────────────────────────────────────────────────
+    @app.get("/api/status")
+    async def get_status():
+        """Bot-Status: Kontostand, offene Positionen, naechste Analyse."""
+        try:
+            balance = await database.get_latest_balance()
+            open_trades = await database.get_open_trades()
+            trades_today = await database.get_trades_today()
+            analyses_today = await database.get_analyses_today()
+            stats = await database.get_performance_stats()
+            return {
+                "status": "running",
+                "balance": balance,
+                "open_trades": len(open_trades),
+                "trades_today": len(trades_today),
+                "analyses_today": len(analyses_today),
+                "performance": stats,
+                "timestamp": datetime.now(tz=config.TZ).isoformat(),
+            }
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+
+    # ── POST /api/analyze ───────────────────────────────────────────────
+    @app.post("/api/analyze")
+    async def trigger_analysis():
+        """Sofort-Analyse ohne Trade-Ausfuehrung."""
+        try:
+            async with CapitalComBroker() as broker:
+                account = await broker.get_account_balance()
+                open_positions = await broker.get_open_positions()
+
+                # Marktdaten laden
+                market_data = {}
+                for asset_key, asset_info in config.WATCHLIST.items():
+                    epic = asset_info["epic"]
+                    try:
+                        data = await broker.get_market_prices(epic)
+                        history = await broker.get_price_history(epic)
+                        data.price_history = history
+                        if config.TRADING_STYLE == "intraday":
+                            try:
+                                daily_bars = await broker.get_price_history(
+                                    epic, resolution="DAY", max_bars=30,
+                                )
+                                data.daily_price_history = daily_bars
+                            except CapitalComError:
+                                pass
+                        market_data[asset_key] = data
+                    except CapitalComError as exc:
+                        logger.warning("Could not fetch %s: %s", asset_key, exc)
+
+                if not market_data:
+                    raise HTTPException(502, "No market data available")
+
+                # Indikatoren
+                indicators = {}
+                for asset_key, data in market_data.items():
+                    bars = data.daily_price_history or data.price_history
+                    if bars:
+                        indicators[asset_key] = calculate_all(bars)
+
+                # News + Lern-Kontext
+                news = NewsAnalyzer()
+                market_context = await news.get_market_context()
+                performance_stats = await database.get_performance_stats()
+                recent_lessons = await database.get_recent_lessons(limit=10)
+
+                # Claude Analyse
+                analyzer = MarketAnalyzer()
+                analysis = await analyzer.analyze_market(
+                    market_data=market_data,
+                    account_balance=account.balance,
+                    open_positions=open_positions,
+                    market_context=market_context,
+                    indicators=indicators,
+                    performance_stats=performance_stats,
+                    recent_lessons=recent_lessons,
+                )
+                await database.save_analysis(analysis)
+
+                logger.info(
+                    "API-Analyse: %s | %s %s (Confidence: %d)",
+                    analysis.recommendation.value,
+                    analysis.best_opportunity.asset,
+                    analysis.best_opportunity.direction.value,
+                    analysis.best_opportunity.confidence,
+                )
+                return analysis.model_dump()
+
+        except CapitalComError as exc:
+            raise HTTPException(502, f"Capital.com API error: {exc}")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("API analysis failed: %s", exc)
+            raise HTTPException(500, str(exc))
+
+    # ── POST /api/daily-summary ─────────────────────────────────────────
+    @app.post("/api/daily-summary")
+    async def trigger_daily_summary():
+        """Tagesbilanz mit Claude-Zusammenfassung."""
+        try:
+            trades_today = await database.get_trades_today()
+            closed = [t for t in trades_today if t.profit_loss is not None]
+            total_pl = sum(t.profit_loss for t in closed if t.profit_loss)
+            balance = await database.get_latest_balance()
+            stats = await database.get_performance_stats()
+
+            # Claude-Zusammenfassung
+            analyzer = MarketAnalyzer()
+            claude_summary = await analyzer.generate_summary(
+                trades=closed,
+                balance=balance,
+                performance_stats=stats,
+                period="Tages",
+            )
+
+            return {
+                "trades_count": len(closed),
+                "total_pl": total_pl,
+                "balance": balance,
+                "trades": [
+                    {
+                        "id": t.id, "asset": t.asset,
+                        "direction": t.direction.value,
+                        "profit_loss": t.profit_loss,
+                        "status": t.status.value,
+                    }
+                    for t in closed
+                ],
+                "claude_summary": claude_summary,
+            }
+        except Exception as exc:
+            logger.exception("Daily summary failed: %s", exc)
+            raise HTTPException(500, str(exc))
+
+    # ── POST /api/trade-review/{trade_id} ───────────────────────────────
+    @app.post("/api/trade-review/{trade_id}")
+    async def trigger_trade_review(trade_id: int):
+        """Post-Trade Review durch Claude."""
+        try:
+            trade = await database.get_trade_by_id(trade_id)
+            if not trade:
+                raise HTTPException(404, f"Trade {trade_id} not found")
+            if trade.status.value == "OPEN":
+                raise HTTPException(400, "Trade is still open")
+
+            # Preisverlauf nach dem Trade laden
+            price_bars_after = None
+            try:
+                async with CapitalComBroker() as broker:
+                    price_bars_after = await broker.get_price_history(
+                        trade.epic, resolution="HOUR", max_bars=48,
+                    )
+            except Exception:
+                pass
+
+            analyzer = MarketAnalyzer()
+            review = await analyzer.review_trade(trade, price_bars_after)
+
+            # Review in DB speichern
+            await database.save_trade_review(trade_id, review)
+
+            return {
+                "trade_id": trade_id,
+                "asset": trade.asset,
+                "direction": trade.direction.value,
+                "profit_loss": trade.profit_loss,
+                "review": review,
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Trade review failed: %s", exc)
+            raise HTTPException(500, str(exc))
+
+    # ── POST /api/weekly-report ─────────────────────────────────────────
+    @app.post("/api/weekly-report")
+    async def trigger_weekly_report():
+        """Wochenreport mit Claude-Analyse."""
+        try:
+            trades = await database.get_recent_trades(days=7)
+            closed = [t for t in trades if t.profit_loss is not None]
+            balance = await database.get_latest_balance()
+            stats = await database.get_performance_stats()
+
+            analyzer = MarketAnalyzer()
+            claude_summary = await analyzer.generate_summary(
+                trades=closed,
+                balance=balance,
+                performance_stats=stats,
+                period="Wochen",
+            )
+
+            return {
+                "trades_count": len(closed),
+                "total_pl": sum(t.profit_loss for t in closed if t.profit_loss),
+                "balance": balance,
+                "claude_summary": claude_summary,
+            }
+        except Exception as exc:
+            logger.exception("Weekly report failed: %s", exc)
+            raise HTTPException(500, str(exc))
+
+    # ── GET /api/pending-rechecks ──────────────────────────────────────
+    @app.get("/api/pending-rechecks")
+    async def get_pending_rechecks():
+        """Alle ausstehenden Rechecks."""
+        try:
+            rechecks = await database.get_pending_rechecks()
+            return {
+                "rechecks": [
+                    {
+                        "id": rc.id,
+                        "asset": rc.asset,
+                        "direction": rc.direction.value,
+                        "trigger_condition": rc.trigger_condition,
+                        "recheck_at": rc.recheck_at.isoformat(),
+                        "recheck_count": rc.recheck_count,
+                        "max_rechecks": rc.max_rechecks,
+                        "confidence": rc.current_confidence,
+                        "status": rc.status,
+                    }
+                    for rc in rechecks
+                ],
+            }
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+
+    # ── POST /api/recheck/{id}/cancel ───────────────────────────────────
+    @app.post("/api/recheck/{recheck_id}/cancel")
+    async def cancel_recheck(recheck_id: int):
+        """Recheck manuell abbrechen."""
+        try:
+            await database.update_recheck_status(recheck_id, "CANCELLED")
+            return {"status": "cancelled", "id": recheck_id}
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+
+    # ── GET /api/learning-history ───────────────────────────────────────
+    @app.get("/api/learning-history")
+    async def get_learning_history():
+        """Alle Lessons Learned aus Trade-Reviews."""
+        try:
+            lessons = await database.get_recent_lessons(limit=50)
+            stats = await database.get_performance_stats()
+            unreviewed = await database.get_unreviewed_trades()
+            return {
+                "lessons": lessons,
+                "performance": stats,
+                "unreviewed_trade_ids": [t.id for t in unreviewed],
+            }
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+
+    return app

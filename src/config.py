@@ -24,9 +24,9 @@ CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 
 # ── Trading parameters ─────────────────────────────────────────────────────────
 MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "1"))
-MAX_RISK_PER_TRADE_PCT: float = float(os.getenv("MAX_RISK_PER_TRADE_PCT", "5.0"))
-MIN_CONFIDENCE_SCORE: int = int(os.getenv("MIN_CONFIDENCE_SCORE", "7"))
-MIN_RISK_REWARD_RATIO: float = float(os.getenv("MIN_RISK_REWARD_RATIO", "1.5"))
+MAX_RISK_PER_TRADE_PCT: float = float(os.getenv("MAX_RISK_PER_TRADE_PCT", "2.0"))   # War: 5.0 – 5% bei 900 EUR war zu aggressiv
+MIN_CONFIDENCE_SCORE: int = int(os.getenv("MIN_CONFIDENCE_SCORE", "8"))             # War: 7 – Claude vergibt 7 zu leicht
+MIN_RISK_REWARD_RATIO: float = float(os.getenv("MIN_RISK_REWARD_RATIO", "1.8"))     # War: 1.5
 ACCOUNT_BALANCE_LIMIT: float = float(os.getenv("ACCOUNT_BALANCE_LIMIT", "500.0"))
 
 # Kill-switch – set TRADING_ENABLED=false to stop all trade execution
@@ -66,6 +66,33 @@ NEWS_KEYWORDS: list[str] = [
     "inflation", "recession",
 ]
 
+# ── Volatilitäts-Gate ──────────────────────────────────────────────────────────
+ATR_LOOKBACK_PERIOD: int = int(os.getenv("ATR_LOOKBACK_PERIOD", "14"))
+MAX_ATR_MULTIPLIER: float = float(os.getenv("MAX_ATR_MULTIPLIER", "2.0"))
+# Wenn aktueller ATR > Durchschnitts-ATR × MAX_ATR_MULTIPLIER → kein Trade
+
+# Overtrading-Schutz
+MAX_TRADES_PER_DAY: int = int(os.getenv("MAX_TRADES_PER_DAY", "1"))
+COOLDOWN_AFTER_LOSS_MINUTES: int = int(os.getenv("COOLDOWN_AFTER_LOSS_MINUTES", "120"))
+
+# Stop-Loss Konfiguration (ATR-basiert)
+SL_ATR_MULTIPLIER: float = float(os.getenv("SL_ATR_MULTIPLIER", "1.5"))
+TP_ATR_MULTIPLIER: float = float(os.getenv("TP_ATR_MULTIPLIER", "2.5"))
+USE_ATR_BASED_SL: bool = os.getenv("USE_ATR_BASED_SL", "true").lower() == "true"
+
+# Slippage-Limits pro Asset (absolute Werte in Asset-Waehrung)
+MAX_SLIPPAGE_ABS: dict[str, float] = {
+    "GOLD": 3.0,
+    "SILVER": 0.5,
+    "OIL_CRUDE": 1.0,
+    "NATURALGAS": 0.1,
+}
+MAX_SLIPPAGE_PCT_DEFAULT: float = float(os.getenv("MAX_SLIPPAGE_PCT", "0.5"))
+
+# Max-Drawdown Schutz
+MAX_DAILY_DRAWDOWN_PCT: float = float(os.getenv("MAX_DAILY_DRAWDOWN_PCT", "5.0"))
+MAX_WEEKLY_DRAWDOWN_PCT: float = float(os.getenv("MAX_WEEKLY_DRAWDOWN_PCT", "10.0"))
+
 # ── Position Monitor ──────────────────────────────────────────────────────────
 TRAIL_TRIGGER_PCT: float = float(os.getenv("TRAIL_TRIGGER_PCT", "1.0"))
 TRAIL_DISTANCE_PCT: float = float(os.getenv("TRAIL_DISTANCE_PCT", "0.5"))
@@ -75,6 +102,13 @@ ESCALATION_MAX_PER_DAY: int = int(os.getenv("ESCALATION_MAX_PER_DAY", "2"))
 # ── API rate limiting ──────────────────────────────────────────────────────────
 CAPITAL_MAX_REQUESTS_PER_HOUR: int = 1000
 CAPITAL_SESSION_TTL_SECONDS: int = 600  # 10 minutes
+
+# ── Recheck-Konfiguration ────────────────────────────────────────────────
+RECHECK_MAX_PER_IDEA: int = int(os.getenv("RECHECK_MAX_PER_IDEA", "3"))
+RECHECK_DEFAULT_MINUTES: int = int(os.getenv("RECHECK_DEFAULT_MINUTES", "60"))
+RECHECK_MIN_MINUTES: int = int(os.getenv("RECHECK_MIN_MINUTES", "15"))
+RECHECK_MAX_MINUTES: int = int(os.getenv("RECHECK_MAX_MINUTES", "180"))
+RECHECK_EXPIRE_TIME: str = os.getenv("RECHECK_EXPIRE_TIME", "20:00")
 
 # ── Trading Style ──────────────────────────────────────────────────────────────
 # "swing"   → Tageskerzen, 30 Bars, mittelfristige Trends (Standard)

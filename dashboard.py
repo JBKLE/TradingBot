@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
 import pandas as pd
 import streamlit as st
 
@@ -13,6 +14,7 @@ import streamlit as st
 DATA_DIR = os.getenv("DATA_DIR", "./data")
 DB_PATH = os.path.join(DATA_DIR, "trades.db")
 LOG_DIR = os.path.join(DATA_DIR, "logs")
+BOT_API_URL = os.getenv("BOT_API_URL", "http://localhost:8502")
 
 # ── Page setup ─────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -195,6 +197,131 @@ col5.metric("ANALYSEN GESAMT", len(analyses))
 
 st.markdown("---")
 
+# ── Action Buttons ────────────────────────────────────────────────────────
+st.markdown("### ◈ AKTIONEN")
+col_b1, col_b2, col_b3, col_b4 = st.columns(4)
+
+with col_b1:
+    if st.button("ANALYSE STARTEN", use_container_width=True):
+        with st.spinner("Claude analysiert den Markt..."):
+            try:
+                resp = httpx.post(f"{BOT_API_URL}/api/analyze", timeout=120)
+                if resp.status_code == 200:
+                    result = resp.json()
+                    opp = result.get("best_opportunity", {})
+                    st.success(
+                        f"**{result.get('recommendation')}** | "
+                        f"{opp.get('asset')} {opp.get('direction')} "
+                        f"(Confidence: {opp.get('confidence')}/10, "
+                        f"RR: {opp.get('risk_reward_ratio', 0):.2f})"
+                    )
+                    st.info(result.get("market_summary", ""))
+                else:
+                    st.error(f"Fehler: {resp.status_code} – {resp.text[:200]}")
+            except Exception as e:
+                st.error(f"API nicht erreichbar: {e}")
+
+with col_b2:
+    if st.button("TAGESBILANZ", use_container_width=True):
+        with st.spinner("Erstelle Tagesbilanz..."):
+            try:
+                resp = httpx.post(f"{BOT_API_URL}/api/daily-summary", timeout=120)
+                if resp.status_code == 200:
+                    result = resp.json()
+                    st.success(
+                        f"Trades heute: {result.get('trades_count', 0)} | "
+                        f"P/L: {result.get('total_pl', 0):+.2f} EUR | "
+                        f"Balance: {result.get('balance', 0):.2f} EUR"
+                    )
+                    cs = result.get("claude_summary", {})
+                    if cs.get("summary"):
+                        st.info(cs["summary"])
+                    for rec in cs.get("recommendations", []):
+                        st.markdown(f"- {rec}")
+                else:
+                    st.error(f"Fehler: {resp.status_code}")
+            except Exception as e:
+                st.error(f"API nicht erreichbar: {e}")
+
+with col_b3:
+    if st.button("WOCHENREPORT", use_container_width=True):
+        with st.spinner("Erstelle Wochenreport..."):
+            try:
+                resp = httpx.post(f"{BOT_API_URL}/api/weekly-report", timeout=120)
+                if resp.status_code == 200:
+                    result = resp.json()
+                    st.success(
+                        f"Woche: {result.get('trades_count', 0)} Trades | "
+                        f"P/L: {result.get('total_pl', 0):+.2f} EUR"
+                    )
+                    cs = result.get("claude_summary", {})
+                    if cs.get("summary"):
+                        st.info(cs["summary"])
+                    if cs.get("highlights"):
+                        st.markdown("**Highlights:** " + " | ".join(cs["highlights"]))
+                    if cs.get("issues"):
+                        st.markdown("**Probleme:** " + " | ".join(cs["issues"]))
+                    for rec in cs.get("recommendations", []):
+                        st.markdown(f"- {rec}")
+                else:
+                    st.error(f"Fehler: {resp.status_code}")
+            except Exception as e:
+                st.error(f"API nicht erreichbar: {e}")
+
+with col_b4:
+    if st.button("BOT STATUS", use_container_width=True):
+        try:
+            resp = httpx.get(f"{BOT_API_URL}/api/status", timeout=10)
+            if resp.status_code == 200:
+                status = resp.json()
+                st.markdown(
+                    f"**Balance:** {status.get('balance', 0):.2f} EUR | "
+                    f"**Offen:** {status.get('open_trades', 0)} | "
+                    f"**Heute:** {status.get('trades_today', 0)} Trades, "
+                    f"{status.get('analyses_today', 0)} Analysen"
+                )
+                perf = status.get("performance", {})
+                if perf.get("total", 0) > 0:
+                    st.markdown(
+                        f"Win-Rate: {perf.get('win_rate', 0):.0f}% | "
+                        f"Verlustserie: {perf.get('current_loss_streak', 0)}"
+                    )
+            else:
+                st.error(f"Fehler: {resp.status_code}")
+        except Exception as e:
+            st.error(f"API nicht erreichbar: {e}")
+
+st.markdown("---")
+
+# ── Pending Rechecks ──────────────────────────────────────────────────────
+rechecks_df = query(
+    "SELECT * FROM pending_rechecks WHERE status = 'PENDING' ORDER BY recheck_at ASC"
+)
+if not rechecks_df.empty:
+    st.markdown("### ◈ PENDING RECHECKS")
+    for _, rc in rechecks_df.iterrows():
+        recheck_at = str(rc["recheck_at"])[:16] if rc["recheck_at"] else "?"
+        st.markdown(
+            f'**{rc["asset"]}** {rc["direction"]} | '
+            f'Trigger: *{rc["trigger_condition"]}* | '
+            f'Confidence: {rc["current_confidence"]} | '
+            f'Check #{int(rc["recheck_count"])+1}/{int(rc["max_rechecks"])} | '
+            f'Naechster: {recheck_at}'
+        )
+        col_rc1, col_rc2, _ = st.columns([1, 1, 4])
+        with col_rc1:
+            if st.button("CANCEL", key=f"cancel_rc_{int(rc['id'])}"):
+                try:
+                    resp = httpx.post(f"{BOT_API_URL}/api/recheck/{int(rc['id'])}/cancel", timeout=10)
+                    if resp.status_code == 200:
+                        st.success("Recheck abgebrochen")
+                        st.rerun()
+                    else:
+                        st.error(f"Fehler: {resp.status_code}")
+                except Exception as e:
+                    st.error(f"API: {e}")
+    st.markdown("---")
+
 # ── Charts Row ─────────────────────────────────────────────────────────────────
 col_left, col_right = st.columns([2, 1])
 
@@ -298,6 +425,74 @@ if not trades.empty:
     st.dataframe(display, use_container_width=True, hide_index=True)
 else:
     st.info("Noch keine Trades in der Datenbank.")
+
+st.markdown("---")
+
+# ── Trade Review ──────────────────────────────────────────────────────────
+st.markdown("### ◈ TRADE REVIEW")
+if not closed_trades.empty:
+    col_rev1, col_rev2 = st.columns([3, 1])
+    with col_rev1:
+        review_options = []
+        for _, row in closed_trades.head(20).iterrows():
+            pl = row["profit_loss"] if pd.notna(row["profit_loss"]) else 0
+            label = f"#{int(row['id'])} {row['asset']} {row['direction']} | P/L: {pl:+.2f} | {row['status']}"
+            review_options.append((int(row["id"]), label))
+        if review_options:
+            selected_id = st.selectbox(
+                "Trade auswaehlen",
+                [x[0] for x in review_options],
+                format_func=lambda x: next(l for i, l in review_options if i == x),
+            )
+    with col_rev2:
+        if review_options and st.button("ANALYSIEREN", use_container_width=True):
+            with st.spinner("Claude analysiert den Trade..."):
+                try:
+                    resp = httpx.post(
+                        f"{BOT_API_URL}/api/trade-review/{selected_id}", timeout=120,
+                    )
+                    if resp.status_code == 200:
+                        result = resp.json()
+                        rev = result.get("review", {})
+                        st.success(f"Review fuer Trade #{selected_id} gespeichert")
+                        st.markdown(f"**Einstieg:** {rev.get('entry_quality', '?')} – {rev.get('entry_quality_explanation', '')}")
+                        st.markdown(f"**Stop-Loss:** {rev.get('sl_quality', '?')} – {rev.get('sl_quality_explanation', '')}")
+                        st.markdown(f"**Marktlage:** {rev.get('market_condition', '?')}")
+                        st.markdown(f"**Lesson Learned:** {rev.get('lesson_learned', '?')}")
+                        for sug in rev.get("improvement_suggestions", []):
+                            st.markdown(f"- {sug}")
+                    else:
+                        st.error(f"Fehler: {resp.status_code} – {resp.text[:200]}")
+                except Exception as e:
+                    st.error(f"API nicht erreichbar: {e}")
+else:
+    st.markdown("*Keine geschlossenen Trades zum Analysieren.*")
+
+st.markdown("---")
+
+# ── Lernhistorie ──────────────────────────────────────────────────────────
+st.markdown("### ◈ WAS HAT DER BOT GELERNT?")
+reviews_df = query(
+    """SELECT r.review_timestamp, r.entry_quality, r.sl_quality,
+              r.market_condition, r.lesson_learned,
+              t.asset, t.direction, t.status, t.profit_loss
+    FROM trade_reviews r JOIN trades t ON r.trade_id = t.id
+    ORDER BY r.review_timestamp DESC LIMIT 20"""
+)
+if not reviews_df.empty:
+    for _, r in reviews_df.iterrows():
+        pl = r["profit_loss"] if pd.notna(r["profit_loss"]) else 0
+        color = "#00ff41" if pl >= 0 else "#ff4444"
+        st.markdown(
+            f'<span style="color:{color}">{r["asset"]} {r["direction"]} '
+            f'({r["status"]}, P/L: {pl:+.2f})</span><br>'
+            f'Entry: {r["entry_quality"]} | SL: {r["sl_quality"]} | Markt: {r["market_condition"]}<br>'
+            f'<b>Lesson:</b> {r["lesson_learned"]}',
+            unsafe_allow_html=True,
+        )
+        st.markdown("")
+else:
+    st.info("Noch keine Trade Reviews. Nutze den ANALYSIEREN Button oben.")
 
 st.markdown("---")
 
