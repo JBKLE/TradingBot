@@ -2,11 +2,24 @@
 import shutil
 from pathlib import Path
 
+from dotenv import find_dotenv
 
-def read_env_file(env_path: str = ".env") -> dict[str, str]:
+
+def _resolve_env_path(env_path: str | None = None) -> Path:
+    """Find the .env file using the same logic as python-dotenv."""
+    if env_path:
+        return Path(env_path)
+    found = find_dotenv(usecwd=True)
+    if found:
+        return Path(found)
+    # Fallback: project root (parent of src/)
+    return Path(__file__).resolve().parent.parent / ".env"
+
+
+def read_env_file(env_path: str | None = None) -> dict[str, str]:
     """Read all key=value pairs from .env file."""
     result: dict[str, str] = {}
-    path = Path(env_path)
+    path = _resolve_env_path(env_path)
     if not path.exists():
         return result
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -20,14 +33,14 @@ def read_env_file(env_path: str = ".env") -> dict[str, str]:
     return result
 
 
-def update_env_file(updates: dict[str, str], env_path: str = ".env") -> None:
+def update_env_file(updates: dict[str, str], env_path: str | None = None) -> None:
     """Update specific keys in .env while preserving comments and structure.
 
     Creates a .env.bak backup before writing.
     """
-    path = Path(env_path)
+    path = _resolve_env_path(env_path)
     if not path.exists():
-        raise FileNotFoundError(f".env file not found: {env_path}")
+        raise FileNotFoundError(f".env file not found: {path}")
 
     # Backup
     shutil.copy2(path, path.with_suffix(".env.bak"))

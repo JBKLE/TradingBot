@@ -17,7 +17,12 @@ SETTINGS_SCHEMA: list[dict] = [
      "type": "select", "options": ["swing", "intraday"],
      "description": "Swing = Tageskerzen, Intraday = Stundenkerzen"},
     {"key": "CLAUDE_MODEL", "label": "Claude Modell", "group": "Trading",
-     "type": "str", "description": "z.B. claude-sonnet-4-6"},
+     "type": "select", "options": [
+         "claude-sonnet-4-6",
+         "claude-opus-4-0-20250115",
+         "claude-haiku-4-5-20251001",
+         "claude-sonnet-4-5-20250514",
+     ], "description": "Claude Modell fuer Marktanalyse"},
     # Risiko
     {"key": "MAX_RISK_PER_TRADE_PCT", "label": "Max Risiko pro Trade (%)", "group": "Risiko",
      "type": "float", "min": 0.5, "max": 10.0, "step": 0.5},
