@@ -9,7 +9,7 @@ import logging
 
 from . import config, database
 from .broker import CapitalComBroker
-from .models import Direction, Trade
+from .models import Direction, Trade, TradeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -100,26 +100,110 @@ class PositionMonitor:
         self._broker = broker
 
     async def check_positions(self) -> list[MonitorAction]:
-        """Alle offenen Trades prüfen und Aktionen zurückgeben."""
+        """Alle offenen Trades pruefen, synchronisieren und Aktionen zurueckgeben."""
         actions: list[MonitorAction] = []
 
-        # Broker ist die Quelle der Wahrheit – erst prüfen ob überhaupt Positionen offen
         broker_positions = await self._broker.get_open_positions()
-        if not broker_positions:
+        open_trades = await database.get_open_trades()
+
+        if not broker_positions and not open_trades:
             return actions
 
-        open_trades = await database.get_open_trades()
+        broker_deal_ids = {p.deal_id for p in broker_positions}
         trades_by_deal_id = {t.deal_id: t for t in open_trades if t.deal_id}
 
-        # Broker-Positionen ohne DB-Eintrag nur loggen
+        # ── 1. Deal-ID Korrektur (Epic+Direction Matching) ──────────────
+        # MUSS vor allem anderen laufen, damit SL/TP Updates die richtige ID nutzen
+        for trade in open_trades:
+            if not trade.deal_id or trade.deal_id in broker_deal_ids:
+                continue
+            for pos in broker_positions:
+                if (pos.epic == trade.epic
+                        and pos.direction == trade.direction
+                        and pos.deal_id not in trades_by_deal_id):
+                    logger.info(
+                        "Deal-ID korrigiert: Trade %s DB=%s → Broker=%s (%s)",
+                        trade.id, trade.deal_id, pos.deal_id, trade.epic,
+                    )
+                    old_id = trade.deal_id
+                    await database.update_trade_deal_id(trade.id, pos.deal_id)
+                    trade.deal_id = pos.deal_id
+                    trades_by_deal_id.pop(old_id, None)
+                    trades_by_deal_id[pos.deal_id] = trade
+                    break
+
+        # ── 2. Orphan-Sync: Broker → DB (Positionen ohne DB-Eintrag) ───
         for pos in broker_positions:
             if pos.deal_id not in trades_by_deal_id:
                 logger.warning(
-                    "Broker-Position %s (%s) nicht in DB – bitte Bot neu starten oder manuell eintragen",
-                    pos.deal_id, pos.epic,
+                    "Verwaiste Broker-Position: %s (%s %s %.2f @ %.4f) – sync to DB",
+                    pos.deal_id, pos.epic, pos.direction.value, pos.size, pos.entry_price,
+                )
+                try:
+                    trade = await database.save_orphan_trade(pos)
+                    trades_by_deal_id[pos.deal_id] = trade
+                    open_trades.append(trade)
+                except Exception as exc:
+                    logger.error("Orphan-Sync fehlgeschlagen fuer %s: %s", pos.deal_id, exc)
+
+        # ── 3. Stale-Sync: DB → Broker (DB-Trades ohne Broker-Position) ─
+        now = datetime.now(tz=config.TZ)
+        stale_trades: list[Trade] = []
+        for trade in open_trades:
+            if not trade.deal_id or trade.deal_id in broker_deal_ids:
+                continue
+            # Nur als stale markieren wenn aelter als 5 Min (neue Trades brauchen Zeit)
+            ts = trade.timestamp
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=config.TZ)
+            if (now - ts).total_seconds() < 300:
+                continue
+            stale_trades.append(trade)
+
+        for trade in stale_trades:
+            try:
+                market = await self._broker.get_market_prices(trade.epic)
+                current = market.current_price.mid
+            except Exception:
+                current = trade.entry_price
+
+            if trade.direction == Direction.BUY:
+                profit_loss = (current - trade.entry_price) * trade.position_size
+            else:
+                profit_loss = (trade.entry_price - current) * trade.position_size
+            denom = trade.entry_price * trade.position_size
+            profit_loss_pct = (profit_loss / denom * 100) if denom else 0.0
+
+            if trade.direction == Direction.BUY:
+                status = (
+                    TradeStatus.TAKE_PROFIT
+                    if trade.take_profit and current >= trade.take_profit * 0.99
+                    else TradeStatus.STOPPED_OUT
+                )
+            else:
+                status = (
+                    TradeStatus.TAKE_PROFIT
+                    if trade.take_profit and current <= trade.take_profit * 1.01
+                    else TradeStatus.STOPPED_OUT
                 )
 
+            await database.update_trade_closed(
+                trade_id=trade.id,
+                exit_price=current,
+                profit_loss=profit_loss,
+                profit_loss_pct=profit_loss_pct,
+                status=status,
+            )
+            open_trades.remove(trade)
+            logger.info(
+                "Trade %s (%s) beim Broker geschlossen: %s | P/L=%.2f (%.2f%%)",
+                trade.id, trade.asset, status.value, profit_loss, profit_loss_pct,
+            )
+
+        # ── 4. Regelbasierte Evaluation der verbleibenden Positionen ────
         for trade in open_trades:
+            if trade.deal_id not in broker_deal_ids:
+                continue
             try:
                 market = await self._broker.get_market_prices(trade.epic)
                 snapshot = PriceSnapshot(

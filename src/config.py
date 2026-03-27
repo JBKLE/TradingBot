@@ -1,10 +1,79 @@
 """Configuration and environment variables for the trading bot."""
 import os
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ── Settings Schema (fuer Dashboard-UI) ─────────────────────────────────────
+SETTINGS_SCHEMA: list[dict] = [
+    # Kill-Switch
+    {"key": "TRADING_ENABLED", "label": "Trading aktiv", "group": "Kill-Switch",
+     "type": "bool", "description": "Master-Schalter fuer Trade-Ausfuehrung"},
+    # Trading
+    {"key": "TRADING_STYLE", "label": "Trading Style", "group": "Trading",
+     "type": "select", "options": ["swing", "intraday"],
+     "description": "Swing = Tageskerzen, Intraday = Stundenkerzen"},
+    {"key": "CLAUDE_MODEL", "label": "Claude Modell", "group": "Trading",
+     "type": "select", "options": [
+         "claude-opus-4-6",
+         "claude-opus-4-5",
+         "claude-sonnet-4-6",
+         "claude-sonnet-4-5",
+         "claude-sonnet-4-0",
+         "claude-haiku-4-5",
+     ], "description": "Claude Modell fuer Marktanalyse"},
+    # Risiko
+    {"key": "MAX_RISK_PER_TRADE_PCT", "label": "Max Risiko pro Trade (%)", "group": "Risiko",
+     "type": "float", "min": 0.5, "max": 10.0, "step": 0.5},
+    {"key": "MIN_CONFIDENCE_SCORE", "label": "Min Confidence Score", "group": "Risiko",
+     "type": "int", "min": 1, "max": 10},
+    {"key": "MIN_RISK_REWARD_RATIO", "label": "Min Risk/Reward Ratio", "group": "Risiko",
+     "type": "float", "min": 1.0, "max": 5.0, "step": 0.1},
+    {"key": "MAX_OPEN_POSITIONS", "label": "Max offene Positionen", "group": "Risiko",
+     "type": "int", "min": 1, "max": 10},
+    {"key": "MAX_TRADES_PER_DAY", "label": "Max Trades pro Tag", "group": "Risiko",
+     "type": "int", "min": 1, "max": 10},
+    {"key": "MAX_DAILY_DRAWDOWN_PCT", "label": "Max Daily Drawdown (%)", "group": "Risiko",
+     "type": "float", "min": 1.0, "max": 20.0, "step": 0.5},
+    {"key": "MAX_WEEKLY_DRAWDOWN_PCT", "label": "Max Weekly Drawdown (%)", "group": "Risiko",
+     "type": "float", "min": 1.0, "max": 30.0, "step": 1.0},
+    # SL/TP
+    {"key": "USE_ATR_BASED_SL", "label": "ATR-basierter Stop-Loss", "group": "SL / TP",
+     "type": "bool"},
+    {"key": "SL_ATR_MULTIPLIER", "label": "SL ATR Multiplier", "group": "SL / TP",
+     "type": "float", "min": 0.5, "max": 5.0, "step": 0.1},
+    {"key": "TP_ATR_MULTIPLIER", "label": "TP ATR Multiplier", "group": "SL / TP",
+     "type": "float", "min": 1.0, "max": 10.0, "step": 0.1},
+    # Trailing Stop
+    {"key": "TRAIL_TRIGGER_PCT", "label": "Trail Trigger (%)", "group": "Trailing Stop",
+     "type": "float", "min": 0.1, "max": 5.0, "step": 0.1},
+    {"key": "TRAIL_DISTANCE_PCT", "label": "Trail Distance (%)", "group": "Trailing Stop",
+     "type": "float", "min": 0.1, "max": 5.0, "step": 0.1},
+    {"key": "TRAIL_MIN_STEP", "label": "Trail Min Step (abs)", "group": "Trailing Stop",
+     "type": "float", "min": 1.0, "max": 50.0, "step": 1.0},
+    # Schedule
+    {"key": "ANALYSIS_SCHEDULE", "label": "Analyse-Schedule (Cron)", "group": "Schedule",
+     "type": "str", "description": "Cron-Syntax, z.B. '0 8,12,16 * * 1-5'"},
+    {"key": "TRADE_WINDOW_START", "label": "Trading-Fenster Start", "group": "Schedule",
+     "type": "str", "description": "Format HH:MM"},
+    {"key": "TRADE_WINDOW_END", "label": "Trading-Fenster Ende", "group": "Schedule",
+     "type": "str", "description": "Format HH:MM"},
+    # Recheck
+    {"key": "RECHECK_MAX_PER_IDEA", "label": "Max Rechecks pro Idee", "group": "Recheck",
+     "type": "int", "min": 1, "max": 10},
+    {"key": "RECHECK_DEFAULT_MINUTES", "label": "Recheck Interval (Min)", "group": "Recheck",
+     "type": "int", "min": 15, "max": 360},
+    # Sonstiges
+    {"key": "COOLDOWN_AFTER_LOSS_MINUTES", "label": "Cooldown nach Verlust (Min)", "group": "Sonstiges",
+     "type": "int", "min": 0, "max": 480},
+    {"key": "ESCALATION_MAX_PER_DAY", "label": "Max Eskalationen pro Tag", "group": "Sonstiges",
+     "type": "int", "min": 0, "max": 10},
+    {"key": "NTFY_TOPIC", "label": "Notification Topic", "group": "Sonstiges",
+     "type": "str", "description": "ntfy.sh Topic fuer Push-Benachrichtigungen"},
+]
 
 # ── Capital.com API ────────────────────────────────────────────────────────────
 CAPITAL_API_KEY: str = os.getenv("CAPITAL_API_KEY", "")
@@ -24,9 +93,9 @@ CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 
 # ── Trading parameters ─────────────────────────────────────────────────────────
 MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "1"))
-MAX_RISK_PER_TRADE_PCT: float = float(os.getenv("MAX_RISK_PER_TRADE_PCT", "5.0"))
-MIN_CONFIDENCE_SCORE: int = int(os.getenv("MIN_CONFIDENCE_SCORE", "7"))
-MIN_RISK_REWARD_RATIO: float = float(os.getenv("MIN_RISK_REWARD_RATIO", "1.5"))
+MAX_RISK_PER_TRADE_PCT: float = float(os.getenv("MAX_RISK_PER_TRADE_PCT", "2.0"))   # War: 5.0 – 5% bei 900 EUR war zu aggressiv
+MIN_CONFIDENCE_SCORE: int = int(os.getenv("MIN_CONFIDENCE_SCORE", "8"))             # War: 7 – Claude vergibt 7 zu leicht
+MIN_RISK_REWARD_RATIO: float = float(os.getenv("MIN_RISK_REWARD_RATIO", "1.8"))     # War: 1.5
 ACCOUNT_BALANCE_LIMIT: float = float(os.getenv("ACCOUNT_BALANCE_LIMIT", "500.0"))
 
 # Kill-switch – set TRADING_ENABLED=false to stop all trade execution
@@ -70,6 +139,33 @@ NEWS_KEYWORDS: list[str] = [
     "inflation", "recession",
 ]
 
+# ── Volatilitäts-Gate ──────────────────────────────────────────────────────────
+ATR_LOOKBACK_PERIOD: int = int(os.getenv("ATR_LOOKBACK_PERIOD", "14"))
+MAX_ATR_MULTIPLIER: float = float(os.getenv("MAX_ATR_MULTIPLIER", "2.0"))
+# Wenn aktueller ATR > Durchschnitts-ATR × MAX_ATR_MULTIPLIER → kein Trade
+
+# Overtrading-Schutz
+MAX_TRADES_PER_DAY: int = int(os.getenv("MAX_TRADES_PER_DAY", "1"))
+COOLDOWN_AFTER_LOSS_MINUTES: int = int(os.getenv("COOLDOWN_AFTER_LOSS_MINUTES", "120"))
+
+# Stop-Loss Konfiguration (ATR-basiert)
+SL_ATR_MULTIPLIER: float = float(os.getenv("SL_ATR_MULTIPLIER", "1.5"))
+TP_ATR_MULTIPLIER: float = float(os.getenv("TP_ATR_MULTIPLIER", "2.5"))
+USE_ATR_BASED_SL: bool = os.getenv("USE_ATR_BASED_SL", "true").lower() == "true"
+
+# Slippage-Limits pro Asset (absolute Werte in Asset-Waehrung)
+MAX_SLIPPAGE_ABS: dict[str, float] = {
+    "GOLD": 3.0,
+    "SILVER": 0.5,
+    "OIL_CRUDE": 1.0,
+    "NATURALGAS": 0.1,
+}
+MAX_SLIPPAGE_PCT_DEFAULT: float = float(os.getenv("MAX_SLIPPAGE_PCT", "0.5"))
+
+# Max-Drawdown Schutz
+MAX_DAILY_DRAWDOWN_PCT: float = float(os.getenv("MAX_DAILY_DRAWDOWN_PCT", "5.0"))
+MAX_WEEKLY_DRAWDOWN_PCT: float = float(os.getenv("MAX_WEEKLY_DRAWDOWN_PCT", "10.0"))
+
 # ── Position Monitor ──────────────────────────────────────────────────────────
 TRAIL_TRIGGER_PCT: float = float(os.getenv("TRAIL_TRIGGER_PCT", "1.0"))
 TRAIL_DISTANCE_PCT: float = float(os.getenv("TRAIL_DISTANCE_PCT", "0.5"))
@@ -79,6 +175,13 @@ ESCALATION_MAX_PER_DAY: int = int(os.getenv("ESCALATION_MAX_PER_DAY", "2"))
 # ── API rate limiting ──────────────────────────────────────────────────────────
 CAPITAL_MAX_REQUESTS_PER_HOUR: int = 1000
 CAPITAL_SESSION_TTL_SECONDS: int = 600  # 10 minutes
+
+# ── Recheck-Konfiguration ────────────────────────────────────────────────
+RECHECK_MAX_PER_IDEA: int = int(os.getenv("RECHECK_MAX_PER_IDEA", "3"))
+RECHECK_DEFAULT_MINUTES: int = int(os.getenv("RECHECK_DEFAULT_MINUTES", "60"))
+RECHECK_MIN_MINUTES: int = int(os.getenv("RECHECK_MIN_MINUTES", "15"))
+RECHECK_MAX_MINUTES: int = int(os.getenv("RECHECK_MAX_MINUTES", "180"))
+RECHECK_EXPIRE_TIME: str = os.getenv("RECHECK_EXPIRE_TIME", "20:00")
 
 # ── Trading Style ──────────────────────────────────────────────────────────────
 # "swing"   → Tageskerzen, 30 Bars, mittelfristige Trends (Standard)
@@ -91,3 +194,68 @@ _default_resolution = "HOUR" if TRADING_STYLE == "intraday" else "DAY"
 _default_bars = 48 if TRADING_STYLE == "intraday" else 30
 PRICE_HISTORY_RESOLUTION: str = os.getenv("PRICE_HISTORY_RESOLUTION", _default_resolution)
 PRICE_HISTORY_MAX_BARS: int = int(os.getenv("PRICE_HISTORY_MAX_BARS", str(_default_bars)))
+
+
+def reload() -> None:
+    """Re-read .env and update all module-level config variables."""
+    load_dotenv(override=True)
+
+    g = globals()
+
+    g["CAPITAL_DEMO"] = os.getenv("CAPITAL_DEMO", "true").lower() == "true"
+    g["CAPITAL_BASE_URL"] = (
+        "https://demo-api-capital.backend-capital.com"
+        if g["CAPITAL_DEMO"]
+        else "https://api-capital.backend-capital.com"
+    )
+    g["CLAUDE_MODEL"] = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+
+    g["MAX_OPEN_POSITIONS"] = int(os.getenv("MAX_OPEN_POSITIONS", "1"))
+    g["MAX_RISK_PER_TRADE_PCT"] = float(os.getenv("MAX_RISK_PER_TRADE_PCT", "2.0"))
+    g["MIN_CONFIDENCE_SCORE"] = int(os.getenv("MIN_CONFIDENCE_SCORE", "8"))
+    g["MIN_RISK_REWARD_RATIO"] = float(os.getenv("MIN_RISK_REWARD_RATIO", "1.8"))
+    g["ACCOUNT_BALANCE_LIMIT"] = float(os.getenv("ACCOUNT_BALANCE_LIMIT", "500.0"))
+    g["TRADING_ENABLED"] = os.getenv("TRADING_ENABLED", "true").lower() == "true"
+
+    g["ANALYSIS_SCHEDULE"] = os.getenv("ANALYSIS_SCHEDULE", "0 8,12,16 * * 1-5")
+    g["TRADE_WINDOW_START"] = os.getenv("TRADE_WINDOW_START", "09:00")
+    g["TRADE_WINDOW_END"] = os.getenv("TRADE_WINDOW_END", "20:00")
+    g["INTRADAY_CLOSE_TIME"] = os.getenv("INTRADAY_CLOSE_TIME", "21:30")
+    g["TIMEZONE"] = os.getenv("TIMEZONE", "Europe/Berlin")
+    g["TZ"] = ZoneInfo(g["TIMEZONE"])
+
+    g["NTFY_TOPIC"] = os.getenv("NTFY_TOPIC", "")
+    g["NTFY_SERVER"] = os.getenv("NTFY_SERVER", "https://ntfy.sh")
+
+    g["NEWS_API_KEY"] = os.getenv("NEWS_API_KEY", "")
+    g["NEWS_FETCH_INTERVAL_SECONDS"] = int(os.getenv("NEWS_FETCH_INTERVAL_HOURS", "4")) * 3600
+
+    g["ATR_LOOKBACK_PERIOD"] = int(os.getenv("ATR_LOOKBACK_PERIOD", "14"))
+    g["MAX_ATR_MULTIPLIER"] = float(os.getenv("MAX_ATR_MULTIPLIER", "2.0"))
+    g["MAX_TRADES_PER_DAY"] = int(os.getenv("MAX_TRADES_PER_DAY", "1"))
+    g["COOLDOWN_AFTER_LOSS_MINUTES"] = int(os.getenv("COOLDOWN_AFTER_LOSS_MINUTES", "120"))
+
+    g["SL_ATR_MULTIPLIER"] = float(os.getenv("SL_ATR_MULTIPLIER", "1.5"))
+    g["TP_ATR_MULTIPLIER"] = float(os.getenv("TP_ATR_MULTIPLIER", "2.5"))
+    g["USE_ATR_BASED_SL"] = os.getenv("USE_ATR_BASED_SL", "true").lower() == "true"
+
+    g["MAX_SLIPPAGE_PCT_DEFAULT"] = float(os.getenv("MAX_SLIPPAGE_PCT", "0.5"))
+    g["MAX_DAILY_DRAWDOWN_PCT"] = float(os.getenv("MAX_DAILY_DRAWDOWN_PCT", "5.0"))
+    g["MAX_WEEKLY_DRAWDOWN_PCT"] = float(os.getenv("MAX_WEEKLY_DRAWDOWN_PCT", "10.0"))
+
+    g["TRAIL_TRIGGER_PCT"] = float(os.getenv("TRAIL_TRIGGER_PCT", "1.0"))
+    g["TRAIL_DISTANCE_PCT"] = float(os.getenv("TRAIL_DISTANCE_PCT", "0.5"))
+    g["TRAIL_MIN_STEP"] = float(os.getenv("TRAIL_MIN_STEP", "5.0"))
+    g["ESCALATION_MAX_PER_DAY"] = int(os.getenv("ESCALATION_MAX_PER_DAY", "2"))
+
+    g["RECHECK_MAX_PER_IDEA"] = int(os.getenv("RECHECK_MAX_PER_IDEA", "3"))
+    g["RECHECK_DEFAULT_MINUTES"] = int(os.getenv("RECHECK_DEFAULT_MINUTES", "60"))
+    g["RECHECK_MIN_MINUTES"] = int(os.getenv("RECHECK_MIN_MINUTES", "15"))
+    g["RECHECK_MAX_MINUTES"] = int(os.getenv("RECHECK_MAX_MINUTES", "180"))
+    g["RECHECK_EXPIRE_TIME"] = os.getenv("RECHECK_EXPIRE_TIME", "20:00")
+
+    g["TRADING_STYLE"] = os.getenv("TRADING_STYLE", "swing").lower()
+    _res = "HOUR" if g["TRADING_STYLE"] == "intraday" else "DAY"
+    _bars = 48 if g["TRADING_STYLE"] == "intraday" else 30
+    g["PRICE_HISTORY_RESOLUTION"] = os.getenv("PRICE_HISTORY_RESOLUTION", _res)
+    g["PRICE_HISTORY_MAX_BARS"] = int(os.getenv("PRICE_HISTORY_MAX_BARS", str(_bars)))

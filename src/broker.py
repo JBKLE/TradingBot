@@ -72,15 +72,34 @@ class CapitalComBroker:
         """GET /api/v1/accounts – return balance information."""
         await self._ensure_session()
         data = await self._request("GET", "/api/v1/accounts")
+        logger.debug("Raw account response: %s", data)
         accounts = data.get("accounts", [])
         if not accounts:
             raise CapitalComError("No accounts found")
         acc = accounts[0]
         balance_data = acc.get("balance", {})
+
+        balance = float(balance_data.get("balance", 0.0) or 0.0)
+        available = float(balance_data.get("available", 0.0) or 0.0)
+
+        # Equity kann unter verschiedenen Keys liegen – mehrere Fallbacks prüfen
+        equity = float(balance_data.get("equity", 0.0) or 0.0)
+        if equity == 0.0:
+            # Fallback 1: direkt im Account-Objekt
+            equity = float(acc.get("equity", 0.0) or 0.0)
+        if equity == 0.0:
+            # Fallback 2: profitLoss-basiert (balance + unrealisierter P/L)
+            profit_loss = float(balance_data.get("profitLoss", 0.0) or 0.0)
+            if profit_loss != 0.0:
+                equity = balance + profit_loss
+        if equity == 0.0:
+            # Fallback 3: balance als Equity (keine offenen Positionen)
+            equity = balance
+
         return AccountInfo(
-            balance=balance_data.get("balance", 0.0),
-            equity=balance_data.get("equity", 0.0),
-            available=balance_data.get("available", 0.0),
+            balance=balance,
+            equity=equity,
+            available=available,
             currency=acc.get("currency", "EUR"),
         )
 

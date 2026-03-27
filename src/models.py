@@ -53,6 +53,7 @@ class MarketData(BaseModel):
     name: str
     current_price: MarketPrice
     price_history: list[PriceBar] = Field(default_factory=list)
+    daily_price_history: list[PriceBar] = Field(default_factory=list)  # Tages-Kerzen für übergeordneten Trend
 
     @property
     def change_24h_pct(self) -> float:
@@ -86,6 +87,16 @@ class AssetOutlook(BaseModel):
     note: str = ""
 
 
+class RecheckInfo(BaseModel):
+    worthy: bool = False
+    asset: str = ""
+    direction: Direction = Direction.NONE
+    trigger_condition: str = ""
+    recheck_in_minutes: int = 60
+    current_confidence: int = 0
+    expected_confidence_if_trigger: int = 0
+
+
 class BestOpportunity(BaseModel):
     asset: str
     direction: Direction
@@ -106,6 +117,7 @@ class AnalysisResult(BaseModel):
     other_assets: list[AssetOutlook] = Field(default_factory=list)
     recommendation: Recommendation
     wait_reason: Optional[str] = None
+    recheck: Optional[RecheckInfo] = None
     tokens_used: int = 0
     cost_usd: float = 0.0
 
@@ -161,3 +173,31 @@ class EscalationResult(BaseModel):
     new_stop_loss: Optional[float] = None
     new_take_profit: Optional[float] = None
     urgency: str = "low"
+
+
+class PendingRecheck(BaseModel):
+    id: Optional[int] = None
+    created_at: datetime
+    asset: str
+    epic: str
+    direction: Direction
+    trigger_condition: str
+    recheck_at: datetime
+    recheck_count: int = 0
+    max_rechecks: int = 3
+    current_confidence: int = 0
+    original_analysis: str = ""
+    status: str = "PENDING"
+    resolved_at: Optional[datetime] = None
+
+
+class TradeReview(BaseModel):
+    id: Optional[int] = None
+    trade_id: int
+    review_timestamp: datetime
+    entry_quality: str = ""
+    sl_quality: str = ""
+    market_condition: str = ""
+    what_happened_after: str = ""
+    lesson_learned: str = ""
+    raw_review: str = ""

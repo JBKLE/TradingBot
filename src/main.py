@@ -13,10 +13,11 @@ from . import config, database
 from .sim_database import init_sim_db
 from .sim_engine import shutdown_broker as sim_shutdown_broker, sim_tick
 from .analyzer import MarketAnalyzer
+from .indicators import calculate_all
 from .news_analyzer import NewsAnalyzer
 from .broker import CapitalComBroker, CapitalComError
 from .executor import TradeExecutor
-from .models import MarketData, Recommendation
+from .models import Direction, MarketData, Recommendation, TradeStatus
 from .monitor import ActionType, PositionMonitor
 from .notifier import Notifier
 from .strategy import TradingStrategy
@@ -90,6 +91,14 @@ async def daily_routine() -> None:
                     data = await broker.get_market_prices(epic)
                     history = await broker.get_price_history(epic)
                     data.price_history = history
+                    # Tages-Kerzen zusätzlich laden (für übergeordneten Trend + Indikatoren)
+                    if config.TRADING_STYLE == "intraday":
+                        try:
+                            daily_bars = await broker.get_price_history(epic, resolution="DAY", max_bars=30)
+                            data.daily_price_history = daily_bars
+                            logger.debug("Loaded %d daily bars for %s", len(daily_bars), asset_key)
+                        except CapitalComError as exc:
+                            logger.warning("Could not fetch daily bars for %s: %s", asset_key, exc)
                     market_data[asset_key] = data
                     logger.debug("Fetched data for %s: %s", asset_key, data.current_price)
                 except CapitalComError as exc:
@@ -100,9 +109,26 @@ async def daily_routine() -> None:
                 await notifier.notify_error("No market data available")
                 return
 
+            # ── 4b. Indikatoren berechnen ─────────────────────────────────────
+            indicators: dict[str, dict] = {}
+            for asset_key, data in market_data.items():
+                bars = data.daily_price_history if data.daily_price_history else data.price_history
+                if bars:
+                    indicators[asset_key] = calculate_all(bars)
+                    logger.debug(
+                        "Indikatoren für %s: ATR=%.4f RSI=%.1f",
+                        asset_key,
+                        indicators[asset_key].get("atr") or 0,
+                        indicators[asset_key].get("rsi") or 0,
+                    )
+
             # ── 5. Claude analysis ────────────────────────────────────────────
             news = NewsAnalyzer()
             market_context = await news.get_market_context()
+
+            # ── Lern-Kontext laden ───────────────────────────────────────────
+            performance_stats = await database.get_performance_stats()
+            recent_lessons = await database.get_recent_lessons(limit=10)
 
             analyzer = MarketAnalyzer()
             analysis = await analyzer.analyze_market(
@@ -110,6 +136,9 @@ async def daily_routine() -> None:
                 account_balance=account.balance,
                 open_positions=open_broker_positions,
                 market_context=market_context,
+                indicators=indicators,
+                performance_stats=performance_stats,
+                recent_lessons=recent_lessons,
             )
             await database.save_analysis(analysis)
 
@@ -123,27 +152,79 @@ async def daily_routine() -> None:
             )
 
             # ── 6. Validate signal ────────────────────────────────────────────
+            trades_today = await database.get_trades_today()
+            last_closed_trade = await database.get_last_closed_trade()
+
+            # Price-Bars des besten Assets für ATR-Gate holen
+            best_asset = analysis.best_opportunity.asset
+            best_bars = None
+            if best_asset in market_data:
+                d = market_data[best_asset]
+                best_bars = d.daily_price_history if d.daily_price_history else d.price_history
+
             strategy = TradingStrategy()
             validation = strategy.validate_signal(
                 analysis=analysis,
                 open_positions_count=len(open_broker_positions),
                 account_balance=account.balance,
                 open_positions=open_broker_positions,
+                price_bars=best_bars,
+                trades_today=trades_today,
+                last_closed_trade=last_closed_trade,
             )
 
             if not validation.valid:
                 logger.info("Signal rejected: %s", validation.reason)
-                await notifier.notify_daily_summary(
-                    recommendation="WAIT",
-                    reason=validation.reason or analysis.wait_reason,
-                )
+
+                # ── Recheck planen wenn Setup vielversprechend ──────
+                if analysis.recheck and analysis.recheck.worthy:
+                    rc = analysis.recheck
+                    epic = config.WATCHLIST.get(rc.asset, {}).get("epic", rc.asset)
+                    recheck_mins = max(
+                        config.RECHECK_MIN_MINUTES,
+                        min(rc.recheck_in_minutes, config.RECHECK_MAX_MINUTES),
+                    )
+                    await database.save_pending_recheck(
+                        asset=rc.asset,
+                        epic=epic,
+                        direction=rc.direction.value,
+                        trigger_condition=rc.trigger_condition,
+                        recheck_in_minutes=recheck_mins,
+                        confidence=rc.current_confidence,
+                        original_analysis=analysis.model_dump_json(),
+                    )
+                    await notifier.notify_daily_summary(
+                        recommendation="WAIT",
+                        reason=(
+                            f"{validation.reason or analysis.wait_reason} – "
+                            f"Recheck geplant: {rc.asset} in {recheck_mins} Min "
+                            f"(Trigger: {rc.trigger_condition})"
+                        ),
+                    )
+                else:
+                    await notifier.notify_daily_summary(
+                        recommendation="WAIT",
+                        reason=validation.reason or analysis.wait_reason,
+                    )
+
                 await database.save_account_snapshot(
                     account.balance, account.equity, len(open_broker_positions)
                 )
                 return
 
             # ── 7. Execute trade ──────────────────────────────────────────────
-            signal = strategy.build_signal(analysis, account.balance)
+            signal = strategy.build_signal(analysis, account.balance, price_bars=best_bars)
+            if signal is None:
+                logger.info("Signal nach build_signal abgelehnt (RR unter Minimum nach ATR-Override)")
+                await notifier.notify_daily_summary(
+                    recommendation="WAIT",
+                    reason="RR-Ratio nach ATR-Override unter Minimum – kein Trade",
+                )
+                await database.save_account_snapshot(
+                    account.balance, account.equity, len(open_broker_positions),
+                )
+                return
+
             logger.info(
                 "Executing signal: %s %s size=%.2f entry=%.4f SL=%.4f TP=%.4f",
                 signal.asset,
@@ -179,6 +260,47 @@ async def daily_routine() -> None:
     logger.info("Daily routine completed")
 
 
+async def _emergency_close(broker, trade, notifier) -> None:
+    """Schliesst eine Position als Notfall wenn SL-Update fehlschlaegt."""
+    if not trade.deal_id:
+        return
+    try:
+        market = await broker.get_market_prices(trade.epic)
+        close_price = market.current_price.mid
+        if trade.direction == Direction.BUY:
+            pl = (close_price - trade.entry_price) * trade.position_size
+        else:
+            pl = (trade.entry_price - close_price) * trade.position_size
+        denom = trade.entry_price * trade.position_size
+        pl_pct = (pl / denom * 100) if denom else 0.0
+
+        await broker.close_position(trade.deal_id)
+        await database.update_trade_closed(
+            trade_id=trade.id,
+            exit_price=close_price,
+            profit_loss=pl,
+            profit_loss_pct=pl_pct,
+            status=TradeStatus.CLOSED,
+        )
+        logger.warning(
+            "NOTFALL-CLOSE: Trade %s (%s) geschlossen – SL-Update fehlgeschlagen. P/L=%.2f",
+            trade.id, trade.asset, pl,
+        )
+        await notifier.notify_error(
+            f"NOTFALL: Trade {trade.id} ({trade.asset}) geschlossen – "
+            f"SL-Update fehlgeschlagen. P/L: {pl:.2f} EUR"
+        )
+    except Exception as close_exc:
+        logger.critical(
+            "KRITISCH: Trade %s kann weder SL-Update noch Close durchfuehren: %s",
+            trade.id, close_exc,
+        )
+        await notifier.notify_error(
+            f"KRITISCH: Trade {trade.id} ({trade.asset}) – SL-Update UND Close fehlgeschlagen! "
+            f"Manuelles Eingreifen erforderlich!"
+        )
+
+
 async def monitor_positions() -> None:
     """
     Alle 5 Minuten: Regelbasierter Check offener Positionen.
@@ -208,6 +330,45 @@ async def monitor_positions() -> None:
                             logger.info(action.reason)
                         except Exception as exc:
                             logger.error("SL update failed for trade %s: %s", trade.id, exc)
+                            # ── NOTFALL: Position schliessen wenn SL nicht gesetzt werden kann
+                            await _emergency_close(broker, trade, notifier)
+
+                elif action.action_type == ActionType.CLOSE:
+                    # Intraday-Close oder regelbasierter Close
+                    if trade.deal_id:
+                        try:
+                            market = await broker.get_market_prices(trade.epic)
+                            close_price = market.current_price.mid
+                            if trade.direction == Direction.BUY:
+                                pl = (close_price - trade.entry_price) * trade.position_size
+                            else:
+                                pl = (trade.entry_price - close_price) * trade.position_size
+                            denom = trade.entry_price * trade.position_size
+                            pl_pct = (pl / denom * 100) if denom else 0.0
+
+                            await broker.close_position(trade.deal_id)
+                            await database.update_trade_closed(
+                                trade_id=trade.id,
+                                exit_price=close_price,
+                                profit_loss=pl,
+                                profit_loss_pct=pl_pct,
+                                status=TradeStatus.CLOSED,
+                            )
+                            logger.info(
+                                "Position %s geschlossen: %s | P/L=%.2f (%.2f%%)",
+                                trade.id, action.reason, pl, pl_pct,
+                            )
+                            await notifier.notify_trade_closed(
+                                trade=trade,
+                                exit_price=close_price,
+                                profit_loss=pl,
+                                profit_loss_pct=pl_pct,
+                            )
+                        except Exception as exc:
+                            logger.error("Close failed for trade %s: %s", trade.id, exc)
+                            await notifier.notify_error(
+                                f"Close fehlgeschlagen: Trade {trade.id} ({trade.asset}): {exc}"
+                            )
 
                 elif action.action_type == ActionType.ALERT:
                     logger.info("Monitor alert [%s]: %s", action.urgency, action.reason)
@@ -248,10 +409,161 @@ async def monitor_positions() -> None:
                     except Exception as exc:
                         logger.error("Escalation failed for trade %s: %s", trade.id, exc)
 
+            # ── Pending Rechecks pruefen ─────────────────────────────────
+            await _process_rechecks(broker, notifier, analyzer)
+
     except CapitalComError as exc:
         logger.error("Monitor – Capital.com error: %s", exc)
     except Exception as exc:
         logger.exception("Monitor – unexpected error: %s", exc)
+
+
+async def _process_rechecks(broker, notifier, analyzer) -> None:
+    """Prueft faellige Rechecks und fuehrt reife Trades aus."""
+    # 1. Alte Rechecks expiren
+    await database.expire_overnight_rechecks()
+
+    # 2. Faellige Rechecks holen
+    due_rechecks = await database.get_due_rechecks()
+    if not due_rechecks:
+        return
+
+    logger.info("Pruefe %d faellige Recheck(s)...", len(due_rechecks))
+
+    # 3. Marktdaten fuer alle Recheck-Assets laden
+    from .indicators import calculate_all as calc_indicators
+    market_data = {}
+    indicators_data = {}
+    for rc in due_rechecks:
+        if rc.asset in market_data:
+            continue
+        try:
+            data = await broker.get_market_prices(rc.epic)
+            history = await broker.get_price_history(rc.epic)
+            data.price_history = history
+            if config.TRADING_STYLE == "intraday":
+                try:
+                    daily_bars = await broker.get_price_history(rc.epic, resolution="DAY", max_bars=30)
+                    data.daily_price_history = daily_bars
+                except Exception:
+                    pass
+            market_data[rc.asset] = data
+            bars = data.daily_price_history if data.daily_price_history else data.price_history
+            if bars:
+                indicators_data[rc.asset] = calc_indicators(bars)
+        except Exception as exc:
+            logger.warning("Marktdaten fuer Recheck %s nicht verfuegbar: %s", rc.asset, exc)
+
+    if not market_data:
+        return
+
+    # 4. Batched Claude-Recheck (alle Setups in einem Call)
+    results = await analyzer.recheck_opportunities(due_rechecks, market_data, indicators_data)
+
+    # 5. Ergebnisse verarbeiten
+    account = await broker.get_account_balance()
+    open_positions = await broker.get_open_positions()
+    trades_today = await database.get_trades_today()
+    last_closed = await database.get_last_closed_trade()
+
+    for rc, result in zip(due_rechecks, results):
+        confidence = result.get("confidence", 0)
+        is_ready = result.get("is_ready", False)
+        retry_worthy = result.get("retry_worthy", False)
+
+        if is_ready and confidence >= config.MIN_CONFIDENCE_SCORE:
+            # ── Trade ausfuehren ────────────────────────────────────
+            logger.info(
+                "Recheck REIF: %s %s (Confidence: %d, Recheck #%d)",
+                rc.asset, rc.direction.value, confidence, rc.recheck_count + 1,
+            )
+            from .models import (
+                AnalysisResult as AR, BestOpportunity as BO, Recommendation as Rec,
+            )
+            opp = BO(
+                asset=rc.asset,
+                direction=rc.direction,
+                confidence=confidence,
+                reasoning=result.get("reasoning", f"Recheck #{rc.recheck_count + 1}"),
+                entry_price=float(result.get("entry_price", 0)),
+                stop_loss=float(result.get("stop_loss", 0)),
+                take_profit=float(result.get("take_profit", 0)),
+                risk_reward_ratio=float(result.get("risk_reward_ratio", 0)),
+            )
+            analysis = AR(
+                date=datetime.now().strftime("%Y-%m-%d"),
+                market_summary=f"Recheck #{rc.recheck_count + 1}: {rc.trigger_condition}",
+                best_opportunity=opp,
+                recommendation=Rec.TRADE,
+            )
+
+            best_data = market_data.get(rc.asset)
+            best_bars = None
+            if best_data:
+                best_bars = best_data.daily_price_history or best_data.price_history
+
+            strategy = TradingStrategy()
+            validation = strategy.validate_signal(
+                analysis=analysis,
+                open_positions_count=len(open_positions),
+                account_balance=account.balance,
+                open_positions=open_positions,
+                price_bars=best_bars,
+                trades_today=trades_today,
+                last_closed_trade=last_closed,
+            )
+
+            if not validation.valid:
+                logger.info("Recheck-Signal abgelehnt: %s", validation.reason)
+                if retry_worthy and rc.recheck_count + 1 < rc.max_rechecks:
+                    next_mins = _clamp_recheck_minutes(result.get("retry_in_minutes"))
+                    await database.increment_recheck(rc.id, next_mins)
+                else:
+                    await database.update_recheck_status(rc.id, "EXPIRED")
+                continue
+
+            signal = strategy.build_signal(analysis, account.balance, price_bars=best_bars)
+            if signal is None:
+                await database.update_recheck_status(rc.id, "EXPIRED")
+                continue
+
+            executor = TradeExecutor(broker)
+            trade_result = await executor.execute_trade(signal)
+
+            if trade_result.success and trade_result.trade:
+                await database.update_recheck_status(rc.id, "EXECUTED")
+                await database.save_analysis(analysis)
+                await notifier.notify_trade_opened(trade_result.trade)
+                logger.info(
+                    "Recheck-Trade ausgefuehrt: %s %s deal_id=%s",
+                    rc.asset, rc.direction.value, trade_result.deal_id,
+                )
+            else:
+                logger.error("Recheck-Trade fehlgeschlagen: %s", trade_result.error)
+                await database.update_recheck_status(rc.id, "EXPIRED")
+
+        elif retry_worthy and rc.recheck_count + 1 < rc.max_rechecks:
+            # ── Naechster Recheck ───────────────────────────────────
+            next_mins = _clamp_recheck_minutes(result.get("retry_in_minutes"))
+            await database.increment_recheck(rc.id, next_mins)
+            logger.info(
+                "Recheck #%d %s: noch nicht reif – naechster in %d Min (%s)",
+                rc.recheck_count + 1, rc.asset, next_mins,
+                result.get("reasoning", "")[:80],
+            )
+        else:
+            # ── Verworfen ───────────────────────────────────────────
+            await database.update_recheck_status(rc.id, "EXPIRED")
+            logger.info(
+                "Recheck %s verworfen: %s",
+                rc.asset, result.get("reasoning", "max Rechecks oder nicht mehr vielversprechend")[:100],
+            )
+
+
+def _clamp_recheck_minutes(minutes) -> int:
+    """Begrenzt Recheck-Intervall auf konfigurierte Min/Max-Werte."""
+    val = int(minutes or config.RECHECK_DEFAULT_MINUTES)
+    return max(config.RECHECK_MIN_MINUTES, min(val, config.RECHECK_MAX_MINUTES))
 
 
 async def daily_summary() -> None:
@@ -334,11 +646,30 @@ async def run_scheduler() -> None:
         scheduler.get_job("daily_routine").next_run_time,
     )
 
-    # ── Startup-Sequenz: einmal direkt beim Start ──────────────────────────
-    logger.info("Running startup checks...")
-    await daily_routine()
-    await monitor_positions()
-    await daily_summary()
+    # ── Startup: nur Initialisierung, kein automatischer Durchlauf ────────
+    # Analysen und Summaries werden per Schedule oder Dashboard-Buttons getriggert
+    logger.info(
+        "Bot gestartet – warte auf Schedule oder Dashboard-Trigger. "
+        "Naechste geplante Analyse: %s",
+        scheduler.get_job("daily_routine").next_run_time,
+    )
+
+    # ── FastAPI-Server starten (fuer Dashboard-Buttons) ──────────────────
+    try:
+        import uvicorn
+        from .api import create_api
+
+        api_app = create_api()
+        api_config = uvicorn.Config(
+            api_app, host="0.0.0.0", port=8502, log_level="info",
+        )
+        api_server = uvicorn.Server(api_config)
+        asyncio.create_task(api_server.serve())
+        logger.info("FastAPI-Server gestartet auf Port 8502")
+    except ImportError:
+        logger.warning("uvicorn nicht installiert – API-Server deaktiviert")
+    except Exception as exc:
+        logger.error("FastAPI-Server konnte nicht gestartet werden: %s", exc)
 
     # Keep running until interrupted
     try:

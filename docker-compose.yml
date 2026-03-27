@@ -6,8 +6,11 @@ services:
     container_name: commodities-trader
     restart: unless-stopped
     env_file: .env
+    ports:
+      - "8502:8502"
     volumes:
       - ./data:/app/data
+      - ./.env:/app/.env
       - /etc/localtime:/etc/localtime:ro
     environment:
       - TZ=Europe/Berlin
@@ -39,6 +42,7 @@ services:
     environment:
       - TZ=Europe/Berlin
       - DATA_DIR=/app/data
+      - BOT_API_URL=http://trading-bot:8502
     depends_on:
       - trading-bot
     logging:
