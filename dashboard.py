@@ -741,8 +741,8 @@ with tab_simulation:
         if sim_trades_all.empty:
             st.info("Noch keine Simulationsdaten vorhanden. Die Simulation sammelt jede Minute Daten.")
         else:
-            sim_trades_all["entry_timestamp"] = pd.to_datetime(sim_trades_all["entry_timestamp"])
-            sim_trades_all["exit_timestamp"] = pd.to_datetime(sim_trades_all["exit_timestamp"], errors="coerce")
+            sim_trades_all["entry_timestamp"] = pd.to_datetime(sim_trades_all["entry_timestamp"], utc=True).dt.tz_localize(None)
+            sim_trades_all["exit_timestamp"] = pd.to_datetime(sim_trades_all["exit_timestamp"], utc=True, errors="coerce").dt.tz_localize(None)
 
             # ── KPI Row ────────────────────────────────────────────────────────
             sim_open = sim_trades_all[sim_trades_all["status"] == "open"]
