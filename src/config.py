@@ -53,6 +53,10 @@ DATA_DIR: str = os.getenv("DATA_DIR", "/app/data")
 DB_PATH: str = os.path.join(DATA_DIR, "trades.db")
 LOG_DIR: str = os.path.join(DATA_DIR, "logs")
 
+# ── Simulation engine ─────────────────────────────────────────────────────────
+SIM_ENABLED: bool = os.getenv("SIM_ENABLED", "false").lower() == "true"
+SIM_DB_PATH: str = os.path.join(DATA_DIR, "simulation.db")
+
 # ── Notifications ──────────────────────────────────────────────────────────────
 NTFY_TOPIC: str = os.getenv("NTFY_TOPIC", "")
 NTFY_SERVER: str = os.getenv("NTFY_SERVER", "https://ntfy.sh")

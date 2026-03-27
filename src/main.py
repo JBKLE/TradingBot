@@ -10,6 +10,8 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from . import config, database
+from .sim_database import init_sim_db
+from .sim_engine import shutdown_broker as sim_shutdown_broker, sim_tick
 from .analyzer import MarketAnalyzer
 from .news_analyzer import NewsAnalyzer
 from .broker import CapitalComBroker, CapitalComError
@@ -281,6 +283,8 @@ async def run_once() -> None:
 async def run_scheduler() -> None:
     """Start the APScheduler cron job and keep the event loop alive."""
     await database.init_db()
+    if config.SIM_ENABLED:
+        await init_sim_db()
     logger.info("Initialising scheduler (schedule: %s, TZ: %s)", config.ANALYSIS_SCHEDULE, config.TIMEZONE)
 
     scheduler = AsyncIOScheduler(timezone=config.TIMEZONE)
@@ -312,6 +316,18 @@ async def run_scheduler() -> None:
         coalesce=True,
     )
 
+    if config.SIM_ENABLED:
+        scheduler.add_job(
+            sim_tick,
+            IntervalTrigger(minutes=1),
+            id="sim_engine",
+            name="Simulation Engine (1 min)",
+            misfire_grace_time=30,
+            coalesce=True,
+            max_instances=1,
+        )
+        logger.info("Simulation engine enabled (1-min interval)")
+
     scheduler.start()
     logger.info(
         "Scheduler started. Next analysis: %s | Monitor: alle 5 Min | Summary: 20:00",
@@ -331,6 +347,8 @@ async def run_scheduler() -> None:
     except (KeyboardInterrupt, SystemExit):
         logger.info("Scheduler stopping...")
         scheduler.shutdown()
+        if config.SIM_ENABLED:
+            await sim_shutdown_broker()
 
 
 def main() -> None:
