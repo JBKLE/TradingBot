@@ -9,6 +9,7 @@ from pathlib import Path
 import httpx
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 DATA_DIR = os.getenv("DATA_DIR", "./data")
@@ -122,7 +123,6 @@ def get_connection():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 
-@st.cache_resource
 def get_sim_connection():
     if not Path(SIM_DB_PATH).exists():
         return None
@@ -289,8 +289,7 @@ with st.sidebar:
                 st.error(f"Speichern fehlgeschlagen: {e}")
 
 if refresh > 0:
-    import time
-    st.empty()
+    st_autorefresh(interval=refresh * 1000, key="auto_refresh")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -766,6 +765,50 @@ with tab_simulation:
 
             st.markdown("---")
 
+            # ── Price Charts ───────────────────────────────────────────────────
+            st.markdown("### ◈ PREISVERLAUF (LIVE)")
+
+            sim_price_data = sim_query(
+                "SELECT timestamp, asset, close FROM price_history ORDER BY timestamp ASC"
+            )
+            if not sim_price_data.empty:
+                sim_price_data["timestamp"] = pd.to_datetime(sim_price_data["timestamp"], utc=True).dt.tz_localize(None)
+
+                # Asset selector for chart
+                chart_assets = sorted(sim_price_data["asset"].unique().tolist())
+                selected_assets = st.multiselect(
+                    "Assets anzeigen", chart_assets, default=chart_assets, key="sim_chart_assets"
+                )
+
+                if selected_assets:
+                    # Pivot: one column per asset
+                    chart_filtered = sim_price_data[sim_price_data["asset"].isin(selected_assets)]
+                    chart_pivot = chart_filtered.pivot_table(
+                        index="timestamp", columns="asset", values="close", aggfunc="last"
+                    )
+
+                    # Separate charts per asset (different price scales)
+                    cols = st.columns(min(len(selected_assets), 2))
+                    for i, asset in enumerate(selected_assets):
+                        if asset in chart_pivot.columns:
+                            with cols[i % 2]:
+                                st.markdown(f"**{asset}**")
+                                asset_data = chart_pivot[[asset]].dropna()
+                                if not asset_data.empty:
+                                    current = asset_data.iloc[-1, 0]
+                                    first = asset_data.iloc[0, 0]
+                                    change = ((current - first) / first) * 100
+                                    st.metric(
+                                        "Aktuell",
+                                        f"{current:.2f}",
+                                        f"{change:+.2f}%",
+                                    )
+                                    st.line_chart(asset_data, color="#00ff41")
+            else:
+                st.info("Noch keine Preisdaten gespeichert.")
+
+            st.markdown("---")
+
             # ── Win/Loss per variant ───────────────────────────────────────────
             st.markdown("### ◈ PERFORMANCE PRO VARIANTE")
 
@@ -931,10 +974,3 @@ with tab_simulation:
                 st.info("Keine Trades fuer die gewaehlten Filter gefunden.")
 
 
-# ── Auto-refresh script ────────────────────────────────────────────────────────
-if refresh > 0:
-    st.markdown(f"""
-    <script>
-        setTimeout(function() {{ window.location.reload(); }}, {refresh * 1000});
-    </script>
-    """, unsafe_allow_html=True)
