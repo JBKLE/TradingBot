@@ -755,13 +755,14 @@ with tab_simulation:
             avg_r = sim_closed["r_multiple"].mean() if not sim_closed.empty else 0.0
             price_count = int(sim_prices["cnt"].iloc[0]) if not sim_prices.empty else 0
 
-            col1, col2, col3, col4, col5, col6 = st.columns(6)
-            col1.metric("OFFENE SIM-TRADES", f"{len(sim_open):,}")
-            col2.metric("ABGESCHLOSSEN", f"{total_closed:,}")
-            col3.metric("WIN (TP)", f"{len(sim_tp):,}")
-            col4.metric("LOSS (SL)", f"{len(sim_sl):,}")
-            col5.metric("WIN RATE", f"{win_rate_sim:.1f}%")
-            col6.metric("PREISDATEN", f"{price_count:,}")
+            col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+            col1.metric("GESAMT TRADES", f"{len(sim_trades_all):,}")
+            col2.metric("OFFENE SIM-TRADES", f"{len(sim_open):,}")
+            col3.metric("ABGESCHLOSSEN", f"{total_closed:,}")
+            col4.metric("WIN (TP)", f"{len(sim_tp):,}")
+            col5.metric("LOSS (SL)", f"{len(sim_sl):,}")
+            col6.metric("WIN RATE", f"{win_rate_sim:.1f}%")
+            col7.metric("PREISDATEN", f"{price_count:,}")
 
             st.markdown("---")
 
