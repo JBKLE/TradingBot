@@ -144,6 +144,16 @@ async def get_open_sim_trades() -> list[SimTrade]:
     return [_row_to_sim_trade(r) for r in rows]
 
 
+async def get_assets_with_open_trades() -> set[str]:
+    """Return the set of asset names that have at least one open sim trade."""
+    async with aiosqlite.connect(config.SIM_DB_PATH) as db:
+        async with db.execute(
+            "SELECT DISTINCT asset FROM sim_trades WHERE status = 'open'"
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return {row[0] for row in rows}
+
+
 async def batch_close_sim_trades(updates: list[tuple]) -> None:
     """Batch-update closed sim trades.
 

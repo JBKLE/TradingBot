@@ -21,6 +21,7 @@ from .sim_database import (
     batch_close_sim_trades,
     batch_insert_prices,
     batch_insert_sim_trades,
+    get_assets_with_open_trades,
     get_open_sim_trades,
     get_sim_trade_stats,
 )
@@ -141,14 +142,21 @@ async def collect_prices(broker: CapitalComBroker) -> dict[str, dict]:
 # ── Step B: Open sim trades ───────────────────────────────────────────────────
 
 async def open_sim_trades(prices: dict[str, dict]) -> int:
-    """Open 24 simulated trades (4 assets × 2 directions × 3 variants).
+    """Open simulated trades (4 assets × 2 directions × 3 variants).
 
+    Skips assets that already have open trades to avoid duplicates.
     Returns the number of trades opened.
     """
     now_iso = datetime.now(tz=config.TZ).isoformat()
     trade_rows: list[tuple] = []
 
+    # Only open new trades for assets without existing open trades
+    busy_assets = await get_assets_with_open_trades()
+
     for asset_key, price_info in prices.items():
+        if asset_key in busy_assets:
+            continue
+
         entry_price = price_info["mid"]
 
         for direction in DIRECTIONS:
