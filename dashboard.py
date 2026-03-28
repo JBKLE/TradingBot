@@ -15,6 +15,7 @@ from streamlit_autorefresh import st_autorefresh
 DATA_DIR = os.getenv("DATA_DIR", "./data")
 DB_PATH = os.path.join(DATA_DIR, "trades.db")
 SIM_DB_PATH = os.path.join(DATA_DIR, "simulation.db")
+HISTORY_DB_PATH = os.path.join(DATA_DIR, "simLastCharts.db")
 LOG_DIR = os.path.join(DATA_DIR, "logs")
 BOT_API_URL = os.getenv("BOT_API_URL", "http://localhost:8502")
 
@@ -186,7 +187,9 @@ def load_log_lines(n: int = 100) -> list[str]:
 
 # ── Backtest Helpers ─────────────────────────────────────────────────────────
 
-def _render_single_backtest(bt_trades: list[dict], bt_source: str, bt_with_pos: bool):
+def _render_single_backtest(bt_trades: list[dict], bt_source: str, bt_with_pos: bool,
+                            fin_capital: float, fin_risk: float, fin_leverage: int,
+                            fin_eur_usd: float, fin_enabled: bool, conf_threshold: int = 8):
     """Einzelnen Trade per Dropdown auswaehlen und backtesten."""
     options = {
         f"#{t['id']} {t['asset']} {t['direction']} "
@@ -199,12 +202,18 @@ def _render_single_backtest(bt_trades: list[dict], bt_source: str, bt_with_pos: 
 
     if st.button("ANALYSIEREN", width="stretch", key="bt_run"):
         with st.spinner("DQN analysiert Trade..."):
-            r = _run_single_backtest(sel_trade["id"], bt_source, bt_with_pos)
+            r = _run_single_backtest(sel_trade["id"], bt_source, bt_with_pos,
+                                     fin_capital if fin_enabled else None,
+                                     fin_risk if fin_enabled else None,
+                                     fin_leverage if fin_enabled else None,
+                                     fin_eur_usd)
             if r:
                 _display_single_result(r)
 
 
-def _render_batch_backtest(bt_trades: list[dict], bt_source: str, bt_with_pos: bool):
+def _render_batch_backtest(bt_trades: list[dict], bt_source: str, bt_with_pos: bool,
+                           fin_capital: float, fin_risk: float, fin_leverage: int,
+                           fin_eur_usd: float, fin_enabled: bool, conf_threshold: int = 8):
     """Alle geladenen Trades backtesten mit Fortschritt und Abbruch."""
     # Filter-Optionen
     fc1, fc2, fc3 = st.columns(3)
@@ -233,6 +242,8 @@ def _render_batch_backtest(bt_trades: list[dict], bt_source: str, bt_with_pos: b
         st.session_state.batch_results = []
     if "batch_running" not in st.session_state:
         st.session_state.batch_running = False
+    if "batch_equity" not in st.session_state:
+        st.session_state.batch_equity = []
 
     bc1, bc2, bc3 = st.columns(3)
     with bc1:
@@ -241,7 +252,7 @@ def _render_batch_backtest(bt_trades: list[dict], bt_source: str, bt_with_pos: b
         stop_batch = st.button("ABBRECHEN", width="stretch", key="bt_batch_stop")
     with bc3:
         if st.session_state.batch_results:
-            csv = _results_to_csv(st.session_state.batch_results)
+            csv = _results_to_csv(st.session_state.batch_results, fin_enabled)
             st.download_button(
                 "CSV DOWNLOAD",
                 csv,
@@ -255,7 +266,11 @@ def _render_batch_backtest(bt_trades: list[dict], bt_source: str, bt_with_pos: b
 
     if start_batch and filtered:
         st.session_state.batch_results = []
+        st.session_state.batch_equity = []
         st.session_state.batch_running = True
+
+        # Laufendes Kapital fuer Equity-Kurve
+        running_capital = fin_capital if fin_enabled else 0
 
         progress_bar = st.progress(0, text="Starte Batch-Backtest...")
         status_text = st.empty()
@@ -269,28 +284,89 @@ def _render_batch_backtest(bt_trades: list[dict], bt_source: str, bt_with_pos: b
             pct = (i + 1) / len(filtered)
             progress_bar.progress(pct, text=f"Trade {i+1}/{len(filtered)}: #{trade['id']} {trade['asset']} {trade['direction']}")
 
-            r = _run_single_backtest(trade["id"], bt_source, bt_with_pos)
+            r = _run_single_backtest(
+                trade["id"], bt_source, bt_with_pos,
+                running_capital if fin_enabled else None,
+                fin_risk if fin_enabled else None,
+                fin_leverage if fin_enabled else None,
+                fin_eur_usd,
+            )
             if r and "error" not in r:
+                # DQN-Entscheidung: Haette die KI hier gehandelt?
+                dqn_action = r.get("dqn_action", "HOLD")
+                dqn_conf = r.get("dqn_confidence", 0)
+                dqn_would_trade = (
+                    dqn_action in ("BUY", "SELL")
+                    and dqn_conf >= conf_threshold
+                )
+                r["dqn_would_trade"] = dqn_would_trade
+
+                # Equity tracking: nur P&L anrechnen wenn DQN gehandelt haette
+                if fin_enabled and "financial" in r:
+                    fin = r["financial"]
+                    if not dqn_would_trade:
+                        # DQN haette NICHT gehandelt → P&L = 0
+                        fin["netto_pnl_eur"] = 0.0
+                        fin["brutto_pnl_eur"] = 0.0
+                        fin["spread_cost_eur"] = 0.0
+                        fin["skipped"] = True
+                        fin["kapital_danach"] = round(running_capital, 2)
+                        st.session_state.batch_equity.append(running_capital)
+                    else:
+                        fin["skipped"] = False
+                        if fin.get("margin_call"):
+                            status_text.error(
+                                f"MARGIN CALL bei Trade #{trade['id']}! "
+                                f"Kapital: {running_capital:.2f} EUR < "
+                                f"Margin: {fin['margin_eur']:.2f} EUR"
+                            )
+                            fin["margin_call_stop"] = True
+                            st.session_state.batch_results.append(r)
+                            st.session_state.batch_equity.append(running_capital)
+                            break
+                        running_capital += fin["netto_pnl_eur"]
+                        fin["kapital_danach"] = round(running_capital, 2)
+                        st.session_state.batch_equity.append(running_capital)
+
                 st.session_state.batch_results.append(r)
 
             # Zwischenergebnis alle 10 Trades aktualisieren
             if (i + 1) % 10 == 0 or i == len(filtered) - 1:
-                _display_batch_summary(results_container, st.session_state.batch_results, i + 1, len(filtered))
+                _display_batch_summary(
+                    results_container, st.session_state.batch_results,
+                    i + 1, len(filtered), fin_enabled, fin_capital,
+                    st.session_state.batch_equity,
+                )
 
         st.session_state.batch_running = False
         progress_bar.progress(1.0, text="Fertig!")
 
     # Vorherige Ergebnisse anzeigen (auch nach Abbruch)
     if st.session_state.batch_results and not start_batch:
-        _display_batch_summary(st, st.session_state.batch_results, len(st.session_state.batch_results), len(filtered))
+        _display_batch_summary(
+            st, st.session_state.batch_results,
+            len(st.session_state.batch_results), len(filtered),
+            fin_enabled, fin_capital, st.session_state.batch_equity,
+        )
 
 
-def _run_single_backtest(trade_id: int, source: str, with_pos: bool) -> dict | None:
+def _run_single_backtest(trade_id: int, source: str, with_pos: bool,
+                         capital: float | None = None, risk_pct: float | None = None,
+                         leverage: int | None = None, eur_usd: float = 1.08) -> dict | None:
     """Einzelnen Backtest via API ausfuehren."""
     try:
+        params = {
+            "source": source,
+            "with_position": str(with_pos).lower(),
+        }
+        if capital is not None:
+            params["capital"] = capital
+            params["risk_pct"] = risk_pct
+            params["leverage"] = leverage
+            params["eur_usd"] = eur_usd
         resp = httpx.post(
             f"{BOT_API_URL}/api/backtest/{trade_id}",
-            params={"source": source, "with_position": str(with_pos).lower()},
+            params=params,
             timeout=30,
         )
         if resp.status_code == 200:
@@ -329,8 +405,23 @@ def _display_single_result(r: dict):
         f"Position-Info: {'Ja' if r['with_position'] else 'Nein'}"
     )
 
+    # Finanzrechnung anzeigen
+    if "financial" in r:
+        fin = r["financial"]
+        st.markdown("---")
+        st.markdown("**Finanzrechnung**")
+        fc1, fc2, fc3, fc4 = st.columns(4)
+        fc1.metric("Lot-Groesse", f"{fin['lot_size']:.4f}")
+        fc2.metric("Positionswert", f"{fin['position_value_eur']:.2f} EUR")
+        fc3.metric("Margin", f"{fin['margin_eur']:.2f} EUR")
+        pnl_color = "normal" if fin["netto_pnl_eur"] >= 0 else "inverse"
+        fc4.metric("Netto P/L", f"{fin['netto_pnl_eur']:+.2f} EUR",
+                   f"Spread: -{fin['spread_cost_eur']:.2f} EUR", delta_color=pnl_color)
 
-def _display_batch_summary(container, results: list[dict], done: int, total: int):
+
+def _display_batch_summary(container, results: list[dict], done: int, total: int,
+                           fin_enabled: bool = False, start_capital: float = 0,
+                           equity_curve: list[float] | None = None):
     """Batch-Zusammenfassung mit Statistiken und Tabelle anzeigen."""
     with container.container():
         n = len(results)
@@ -339,13 +430,64 @@ def _display_batch_summary(container, results: list[dict], done: int, total: int
         miss = sum(1 for r in results if r["verdict"] == "MISS")
         avg_conf = sum(r["dqn_confidence"] for r in results) / n if n else 0
 
+        # Wie viele haette DQN gehandelt?
+        traded = sum(1 for r in results if r.get("dqn_would_trade"))
+        skipped = n - traded
+
         # Statistik-Kacheln
-        sc1, sc2, sc3, sc4, sc5 = st.columns(5)
+        sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
         sc1.metric("Analysiert", f"{done}/{total}")
         sc2.metric("MATCH", match, f"{match/n*100:.0f}%" if n else "")
         sc3.metric("BESSER", besser, f"{besser/n*100:.0f}%" if n else "")
         sc4.metric("MISS", miss, f"{miss/n*100:.0f}%" if n else "")
         sc5.metric("Avg Confidence", f"{avg_conf:.1f}/10")
+        sc6.metric("DQN handelt", f"{traded}", f"{skipped} uebersprungen")
+
+        # ── Finanz-Kennzahlen ──
+        if fin_enabled and equity_curve:
+            end_capital = equity_curve[-1] if equity_curve else start_capital
+            rendite_pct = ((end_capital - start_capital) / start_capital * 100) if start_capital > 0 else 0
+
+            # Max Drawdown
+            peak = start_capital
+            max_dd = 0
+            for eq in equity_curve:
+                if eq > peak:
+                    peak = eq
+                dd = (peak - eq) / peak * 100 if peak > 0 else 0
+                if dd > max_dd:
+                    max_dd = dd
+
+            # Profit Factor
+            fin_results = [r for r in results if "financial" in r]
+            gewinne = sum(r["financial"]["netto_pnl_eur"] for r in fin_results if r["financial"]["netto_pnl_eur"] > 0)
+            verluste = abs(sum(r["financial"]["netto_pnl_eur"] for r in fin_results if r["financial"]["netto_pnl_eur"] < 0))
+            profit_factor = gewinne / verluste if verluste > 0 else float("inf") if gewinne > 0 else 0
+
+            # Groesster Gewinn / Verlust
+            all_pnl = [r["financial"]["netto_pnl_eur"] for r in fin_results]
+            max_win = max(all_pnl) if all_pnl else 0
+            max_loss = min(all_pnl) if all_pnl else 0
+
+            st.markdown("---")
+            st.markdown("**Finanz-Kennzahlen**")
+            fk1, fk2, fk3, fk4, fk5 = st.columns(5)
+            fk1.metric("Startkapital", f"{start_capital:.2f} EUR")
+            fk2.metric("Endkapital", f"{end_capital:.2f} EUR",
+                       f"{rendite_pct:+.1f}%")
+            fk3.metric("Max Drawdown", f"{max_dd:.1f}%")
+            fk4.metric("Profit Factor", f"{profit_factor:.2f}")
+            fk5.metric("Max Win / Loss",
+                       f"+{max_win:.2f} / {max_loss:.2f} EUR")
+
+            # Equity-Kurve
+            if len(equity_curve) > 1:
+                st.markdown("**Equity-Kurve**")
+                eq_df = pd.DataFrame({
+                    "Trade": range(1, len(equity_curve) + 1),
+                    "Kapital (EUR)": equity_curve,
+                })
+                st.line_chart(eq_df, x="Trade", y="Kapital (EUR)")
 
         # Aufschluesselung nach Asset
         assets = sorted(set(r["asset"] for r in results))
@@ -357,21 +499,27 @@ def _display_batch_summary(container, results: list[dict], done: int, total: int
                 a_match = sum(1 for r in ar if r["verdict"] == "MATCH")
                 a_besser = sum(1 for r in ar if r["verdict"] == "BESSER")
                 a_miss = sum(1 for r in ar if r["verdict"] == "MISS")
-                asset_rows.append({
+                row = {
                     "Asset": asset,
                     "Trades": an,
                     "MATCH": a_match,
                     "BESSER": a_besser,
                     "MISS": a_miss,
                     "Match%": f"{a_match/an*100:.0f}%" if an else "-",
-                })
+                }
+                # EUR P&L pro Asset
+                if fin_enabled:
+                    ar_fin = [r for r in ar if "financial" in r]
+                    asset_pnl = sum(r["financial"]["netto_pnl_eur"] for r in ar_fin)
+                    row["P/L EUR"] = f"{asset_pnl:+.2f}"
+                asset_rows.append(row)
             st.dataframe(pd.DataFrame(asset_rows), width="stretch", hide_index=True)
 
         # Detail-Tabelle
         with st.expander(f"Detail-Tabelle ({n} Trades)", expanded=False):
             rows = []
             for r in results:
-                rows.append({
+                row = {
                     "Asset": r["asset"],
                     "Trade": r["trade_direction"],
                     "Entry": f"{r['trade_entry_price']:.4f}",
@@ -379,37 +527,49 @@ def _display_batch_summary(container, results: list[dict], done: int, total: int
                     "Gewinn": r["trade_won"],
                     "DQN": r["dqn_action"],
                     "Conf": r["dqn_confidence"],
+                    "Handelt": "JA" if r.get("dqn_would_trade") else "NEIN",
                     "Verdict": r["verdict"],
                     "Kerzen": r["candle_count"],
-                })
+                }
+                if fin_enabled and "financial" in r:
+                    fin = r["financial"]
+                    if fin.get("skipped"):
+                        row["Netto EUR"] = "-"
+                    else:
+                        row["Netto EUR"] = f"{fin['netto_pnl_eur']:+.2f}"
+                    row["Kapital"] = f"{fin.get('kapital_danach', '-')}"
+                rows.append(row)
             st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
-def _results_to_csv(results: list[dict]) -> str:
+def _results_to_csv(results: list[dict], fin_enabled: bool = False) -> str:
     """Batch-Ergebnisse als CSV-String."""
     import io
     rows = []
     for r in results:
-        rows.append({
-            "asset": r["asset"],
-            "entry_timestamp": r["entry_timestamp"],
-            "trade_direction": r["trade_direction"],
-            "trade_entry_price": r["trade_entry_price"],
-            "trade_pnl": r["trade_pnl"],
-            "trade_won": r["trade_won"],
-            "dqn_action": r["dqn_action"],
-            "dqn_confidence": r["dqn_confidence"],
-            "dqn_softmax": r["dqn_softmax"],
-            "dqn_sl": r["dqn_sl"],
-            "dqn_tp": r["dqn_tp"],
-            "q_hold": r["dqn_q_values"].get("HOLD", 0),
-            "q_buy": r["dqn_q_values"].get("BUY", 0),
-            "q_sell": r["dqn_q_values"].get("SELL", 0),
-            "q_close": r["dqn_q_values"].get("CLOSE", 0),
-            "verdict": r["verdict"],
-            "candle_count": r["candle_count"],
-            "with_position": r["with_position"],
-        })
+        row = {
+            "Asset": r["asset"],
+            "Trade": r["trade_direction"],
+            "Entry": r["trade_entry_price"],
+            "P/L": r["trade_pnl"],
+            "Gewinn": r["trade_won"],
+            "DQN": r["dqn_action"],
+            "Conf": r["dqn_confidence"],
+            "Handelt": r.get("dqn_would_trade", ""),
+            "Verdict": r["verdict"],
+            "Kerzen": r["candle_count"],
+        }
+        if fin_enabled and "financial" in r:
+            fin = r["financial"]
+            row["Skipped"] = fin.get("skipped", False)
+            row["Lot"] = fin["lot_size"] if not fin.get("skipped") else 0
+            row["Positionswert_EUR"] = fin["position_value_eur"] if not fin.get("skipped") else 0
+            row["Margin_EUR"] = fin["margin_eur"] if not fin.get("skipped") else 0
+            row["Brutto_EUR"] = fin["brutto_pnl_eur"]
+            row["Spread_EUR"] = fin["spread_cost_eur"]
+            row["Netto_EUR"] = fin["netto_pnl_eur"]
+            row["Kapital_danach"] = fin.get("kapital_danach", "")
+        rows.append(row)
     buf = io.StringIO()
     pd.DataFrame(rows).to_csv(buf, index=False)
     return buf.getvalue()
@@ -526,7 +686,7 @@ if refresh > 0:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB NAVIGATION
 # ══════════════════════════════════════════════════════════════════════════════
-tab_trading, tab_simulation = st.tabs(["◈ TRADING", "◈ SIMULATION"])
+tab_trading, tab_simulation, tab_history = st.tabs(["◈ TRADING", "◈ SIMULATION", "◈ HISTORISCHE DATEN"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -580,6 +740,35 @@ with tab_trading:
             with bt_col4:
                 bt_mode = st.selectbox("Modus", ["Einzeln", "Batch (alle)"], key="bt_mode")
 
+            # Confidence-Schwelle
+            bt_conf_threshold = st.slider(
+                "Min. Confidence (DQN handelt nur ab diesem Wert)",
+                min_value=1, max_value=10, value=8, step=1, key="bt_conf_threshold",
+            )
+
+            # Finanz-Einstellungen
+            fin_enabled = st.checkbox("Finanzrechnung aktivieren", key="bt_fin_enabled")
+            if fin_enabled:
+                fin_c1, fin_c2, fin_c3, fin_c4 = st.columns(4)
+                with fin_c1:
+                    fin_capital = st.number_input(
+                        "Startkapital (EUR)", value=1000.0,
+                        min_value=100.0, step=100.0, key="bt_fin_capital")
+                with fin_c2:
+                    fin_risk = st.number_input(
+                        "Risiko pro Trade (%)", value=1.0,
+                        min_value=0.1, max_value=10.0, step=0.1, key="bt_fin_risk") / 100.0
+                with fin_c3:
+                    fin_leverage = st.number_input(
+                        "Hebel", value=20,
+                        min_value=1, max_value=100, step=1, key="bt_fin_leverage")
+                with fin_c4:
+                    fin_eur_usd = st.number_input(
+                        "EUR/USD Kurs", value=1.08,
+                        min_value=0.80, max_value=1.50, step=0.01, key="bt_fin_eurusd")
+            else:
+                fin_capital, fin_risk, fin_leverage, fin_eur_usd = 1000.0, 0.01, 20, 1.08
+
             # Trades laden
             try:
                 resp = httpx.get(
@@ -594,9 +783,13 @@ with tab_trading:
                     if not bt_trades:
                         st.warning("Keine abgeschlossenen Trades gefunden")
                     elif bt_mode == "Einzeln":
-                        _render_single_backtest(bt_trades, bt_source, bt_with_pos)
+                        _render_single_backtest(bt_trades, bt_source, bt_with_pos,
+                                                fin_capital, fin_risk, fin_leverage,
+                                                fin_eur_usd, fin_enabled, bt_conf_threshold)
                     else:
-                        _render_batch_backtest(bt_trades, bt_source, bt_with_pos)
+                        _render_batch_backtest(bt_trades, bt_source, bt_with_pos,
+                                               fin_capital, fin_risk, fin_leverage,
+                                               fin_eur_usd, fin_enabled, bt_conf_threshold)
             except Exception as e:
                 st.error(f"API nicht erreichbar: {e}")
 
@@ -1223,3 +1416,306 @@ with tab_simulation:
                 st.info("Keine Trades fuer die gewaehlten Filter gefunden.")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 3: HISTORISCHE DATEN
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_history:
+    st.markdown("### ◈ HISTORISCHE KURSDATEN")
+    st.markdown("Lade vergangene 1-Min-Kerzen von Capital.com und lasse die KI im Turbo-Modus darueber laufen.")
+
+    # ── Section 1: Daten-Status ───────────────────────────────────────────
+    st.markdown("#### 1. Daten-Status")
+
+    def _load_history_status():
+        """Check existing data in simLastCharts.db."""
+        db_path = HISTORY_DB_PATH
+        if not os.path.exists(db_path):
+            return {}
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.execute(
+                "SELECT asset, COUNT(*), MIN(timestamp), MAX(timestamp) "
+                "FROM price_history GROUP BY asset"
+            )
+            result = {}
+            for row in cursor.fetchall():
+                result[row[0]] = {"count": row[1], "min_ts": row[2], "max_ts": row[3]}
+            conn.close()
+            return result
+        except Exception:
+            return {}
+
+    history_status = _load_history_status()
+
+    if history_status:
+        cols_hs = st.columns(len(history_status))
+        for i, (asset, info) in enumerate(history_status.items()):
+            with cols_hs[i]:
+                st.metric(asset, f"{info['count']:,} Kerzen")
+                if info["min_ts"] and info["max_ts"]:
+                    st.caption(f"{info['min_ts'][:10]} bis {info['max_ts'][:10]}")
+    else:
+        st.info("Noch keine historischen Daten vorhanden. Lade Daten ueber das Formular unten.")
+
+    st.markdown("---")
+
+    # ── Section 2: Daten laden ────────────────────────────────────────────
+    st.markdown("#### 2. Historische Daten laden")
+
+    col_date1, col_date2 = st.columns(2)
+    with col_date1:
+        hist_start = st.date_input(
+            "Von",
+            value=datetime.now() - timedelta(days=28),
+            key="hist_start",
+        )
+    with col_date2:
+        hist_end = st.date_input(
+            "Bis",
+            value=datetime.now() - timedelta(days=1),
+            key="hist_end",
+        )
+
+    hist_assets = st.multiselect(
+        "Assets (leer = alle)",
+        options=["GOLD", "SILVER", "OIL_CRUDE", "NATURALGAS"],
+        default=[],
+        key="hist_assets",
+    )
+
+    # Estimated chunks
+    if hist_start and hist_end:
+        days = (hist_end - hist_start).days
+        est_candles = days * 22 * 60  # ~22 trading hours per day
+        est_requests = max(1, est_candles // 1000)
+        n_assets = len(hist_assets) if hist_assets else 4
+        st.caption(
+            f"Geschaetzt: ~{est_candles * n_assets:,} Kerzen, "
+            f"~{est_requests * n_assets} API-Requests, "
+            f"~{est_requests * n_assets * 0.15 / 60:.1f} Minuten"
+        )
+
+    col_fetch1, col_fetch2 = st.columns([1, 3])
+    with col_fetch1:
+        fetch_btn = st.button("Daten laden", key="fetch_history_btn", type="primary")
+    with col_fetch2:
+        if "fetch_running" not in st.session_state:
+            st.session_state.fetch_running = False
+
+    if fetch_btn and not st.session_state.fetch_running:
+        st.session_state.fetch_running = True
+        try:
+            resp = httpx.post(
+                f"{BOT_API_URL}/api/fetch-history",
+                json={
+                    "start_date": hist_start.isoformat(),
+                    "end_date": hist_end.isoformat(),
+                    "assets": hist_assets if hist_assets else None,
+                },
+                timeout=10.0,
+            )
+            data = resp.json()
+            if data.get("status") == "started":
+                st.success("Download gestartet! Fortschritt wird unten angezeigt.")
+            elif data.get("status") == "already_running":
+                st.warning("Download laeuft bereits.")
+            else:
+                st.error(f"Fehler: {data}")
+        except Exception as exc:
+            st.error(f"API-Fehler: {exc}")
+            st.session_state.fetch_running = False
+
+    # Show fetch progress
+    if st.session_state.get("fetch_running"):
+        try:
+            resp = httpx.get(f"{BOT_API_URL}/api/fetch-history/progress", timeout=5.0)
+            prog = resp.json()
+            if prog.get("running"):
+                p = prog.get("progress", {})
+                st.info(
+                    f"Lade: {p.get('asset', '...')} — "
+                    f"Block {p.get('chunk', 0)}/{p.get('total_chunks', '?')} "
+                    f"({p.get('new_bars', 0)} neue Kerzen)"
+                )
+            elif prog.get("result") is not None:
+                result = prog["result"]
+                if isinstance(result, list):
+                    for r in result:
+                        st.success(
+                            f"{r['asset']}: {r['fetched']} geladen, "
+                            f"{r['skipped']} uebersprungen, "
+                            f"{r['errors']} Fehler"
+                        )
+                elif isinstance(result, dict) and "error" in result:
+                    st.error(f"Fehler: {result['error']}")
+                st.session_state.fetch_running = False
+        except Exception:
+            pass
+
+    st.markdown("---")
+
+    # ── Section 3: Zeitstrahl-Simulation ──────────────────────────────────
+    st.markdown("#### 3. Zeitstrahl-Simulation (Turbo-Modus)")
+    st.markdown("DQN laeuft offline ueber alle geladenen Kerzen — so schnell wie CPU/GPU es erlauben.")
+
+    col_sim1, col_sim2, col_sim3 = st.columns(3)
+    with col_sim1:
+        sim_start = st.date_input(
+            "Sim Von",
+            value=hist_start if hist_start else datetime.now() - timedelta(days=28),
+            key="sim_start",
+        )
+    with col_sim2:
+        sim_end = st.date_input(
+            "Sim Bis",
+            value=hist_end if hist_end else datetime.now() - timedelta(days=1),
+            key="sim_end",
+        )
+    with col_sim3:
+        sim_confidence = st.slider(
+            "Confidence Schwelle",
+            min_value=1,
+            max_value=10,
+            value=8,
+            key="sim_confidence_threshold",
+            help="DQN handelt nur bei Confidence >= diesem Wert",
+        )
+
+    sim_assets = st.multiselect(
+        "Sim Assets (leer = alle)",
+        options=["GOLD", "SILVER", "OIL_CRUDE", "NATURALGAS"],
+        default=[],
+        key="sim_assets",
+    )
+
+    col_simbtn1, col_simbtn2 = st.columns([1, 1])
+    with col_simbtn1:
+        sim_btn = st.button("Simulation starten", key="timeline_sim_btn", type="primary")
+    with col_simbtn2:
+        cancel_btn = st.button("Abbrechen", key="timeline_cancel_btn")
+
+    if "sim_running" not in st.session_state:
+        st.session_state.sim_running = False
+
+    if sim_btn and not st.session_state.sim_running:
+        st.session_state.sim_running = True
+        st.session_state.pop("sim_result", None)
+        try:
+            resp = httpx.post(
+                f"{BOT_API_URL}/api/run-timeline-sim",
+                json={
+                    "start_date": sim_start.isoformat() if sim_start else None,
+                    "end_date": sim_end.isoformat() if sim_end else None,
+                    "assets": sim_assets if sim_assets else None,
+                    "confidence_threshold": sim_confidence,
+                },
+                timeout=10.0,
+            )
+            data = resp.json()
+            if data.get("status") == "started":
+                st.success("Simulation gestartet!")
+            elif data.get("status") == "already_running":
+                st.warning("Simulation laeuft bereits.")
+        except Exception as exc:
+            st.error(f"API-Fehler: {exc}")
+            st.session_state.sim_running = False
+
+    if cancel_btn:
+        try:
+            httpx.post(f"{BOT_API_URL}/api/timeline-sim/cancel", timeout=5.0)
+            st.warning("Abbruch angefordert...")
+        except Exception:
+            pass
+
+    # Show simulation progress / result
+    if st.session_state.get("sim_running"):
+        try:
+            resp = httpx.get(f"{BOT_API_URL}/api/timeline-sim/progress", timeout=5.0)
+            prog = resp.json()
+            if prog.get("running"):
+                p = prog.get("progress", {})
+                pct = p.get("pct", 0)
+                st.progress(pct / 100.0)
+                st.info(
+                    f"Minute {p.get('current_minute', 0):,}/{p.get('total_minutes', '?'):,} "
+                    f"({pct}%) — {p.get('open_trades', 0)} offen, "
+                    f"{p.get('closed_trades', 0)} geschlossen"
+                )
+            elif prog.get("result") is not None:
+                st.session_state.sim_result = prog["result"]
+                st.session_state.sim_running = False
+        except Exception:
+            pass
+
+    # Display simulation results
+    sim_result = st.session_state.get("sim_result")
+    if sim_result and "error" not in sim_result:
+        st.markdown("---")
+        st.markdown("#### Ergebnis")
+
+        col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+        col_r1.metric("TRADES", sim_result.get("trades", 0))
+        col_r2.metric(
+            "WIN RATE",
+            f"{sim_result.get('win_rate', 0):.1f}%",
+            f"{sim_result.get('wins', 0)}W / {sim_result.get('losses', 0)}L",
+        )
+        col_r3.metric("P/L (Punkte)", f"{sim_result.get('total_pnl_points', 0):+.4f}")
+        col_r4.metric("Avg R-Multiple", f"{sim_result.get('avg_r_multiple', 0):+.3f}")
+
+        st.caption(
+            f"Zeitraum: {sim_result.get('start_ts', '')[:16]} bis {sim_result.get('end_ts', '')[:16]} "
+            f"({sim_result.get('total_minutes', 0):,} Minuten)"
+        )
+
+        # Per-asset breakdown
+        per_asset = sim_result.get("per_asset", {})
+        if per_asset:
+            st.markdown("##### Pro Asset")
+            pa_cols = st.columns(len(per_asset))
+            for i, (asset, stats) in enumerate(per_asset.items()):
+                with pa_cols[i]:
+                    wr = stats.get("win_rate", 0)
+                    st.metric(
+                        asset,
+                        f"{stats.get('trades', 0)} Trades",
+                        f"WR: {wr:.0f}% | P/L: {stats.get('pnl', 0):+.4f}",
+                    )
+
+        # Trade list table
+        trade_list = sim_result.get("trade_list", [])
+        if trade_list:
+            st.markdown("##### Alle Trades")
+            df_trades = pd.DataFrame(trade_list)
+            df_trades = df_trades.rename(columns={
+                "asset": "Asset",
+                "direction": "Dir",
+                "entry_ts": "Entry",
+                "exit_ts": "Exit",
+                "entry_price": "Entry Preis",
+                "exit_price": "Exit Preis",
+                "pnl": "P/L",
+                "r_multiple": "R-Mult",
+                "status": "Status",
+                "confidence": "Conf",
+            })
+
+            # Color P/L
+            st.dataframe(
+                df_trades,
+                width="stretch",
+                hide_index=True,
+            )
+
+            # CSV download
+            csv_data = df_trades.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                "CSV Download",
+                data=csv_data,
+                file_name=f"timeline_sim_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                mime="text/csv",
+                width="stretch",
+            )
+
+    elif sim_result and "error" in sim_result:
+        st.error(f"Simulation fehlgeschlagen: {sim_result['error']}")

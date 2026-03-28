@@ -1,4 +1,5 @@
 """FastAPI-Server fuer Dashboard-Buttons und Bot-Steuerung."""
+import asyncio
 import logging
 import os
 import time
@@ -80,13 +81,25 @@ def create_api() -> FastAPI:
 
     # ── POST /api/backtest/{trade_id} ─────────────────────────────────────
     @app.post("/api/backtest/{trade_id}")
-    async def backtest_trade(trade_id: int, source: str = "sim", with_position: bool = False):
+    async def backtest_trade(
+        trade_id: int,
+        source: str = "sim",
+        with_position: bool = False,
+        capital: float | None = None,
+        risk_pct: float | None = None,
+        leverage: int | None = None,
+        eur_usd: float = 1.08,
+    ):
         """Backtest: DQN-Inferenz zum Zeitpunkt eines historischen Trades.
 
         Args:
             trade_id: ID des Trades
             source: "sim" (simulation.db) oder "real" (trades.db)
             with_position: Wenn true, wird Position-Info in den State eingebaut
+            capital: Kapital in EUR (optional, fuer Finanzrechnung)
+            risk_pct: Risiko pro Trade in Dezimal (z.B. 0.01 = 1%)
+            leverage: Hebel (z.B. 20)
+            eur_usd: EUR/USD Kurs
         """
         try:
             if source == "sim":
@@ -125,6 +138,10 @@ def create_api() -> FastAPI:
                 with_position=with_position,
                 position_direction=direction if with_position else None,
                 position_entry_price=entry_price if with_position else None,
+                capital=capital,
+                risk_pct=risk_pct,
+                leverage=leverage,
+                eur_usd=eur_usd,
             )
 
             if "error" in result:
@@ -555,5 +572,143 @@ def create_api() -> FastAPI:
         except Exception as exc:
             logger.exception("Failed to update settings: %s", exc)
             raise HTTPException(500, str(exc))
+
+    # ── GET /api/history-status ─────────────────────────────────────────
+    @app.get("/api/history-status")
+    async def get_history_status():
+        """Status der historischen Daten in simLastCharts.db."""
+        try:
+            from .fetch_history import get_all_existing_ranges, HISTORY_DB_PATH, init_history_db
+            await init_history_db()
+            ranges = await get_all_existing_ranges()
+            return {
+                "db_path": HISTORY_DB_PATH,
+                "assets": ranges,
+            }
+        except Exception as exc:
+            logger.exception("History status failed: %s", exc)
+            raise HTTPException(500, str(exc))
+
+    # ── POST /api/fetch-history ──────────────────────────────────────────
+    class FetchHistoryRequest(BaseModel):
+        start_date: str  # "2026-01-01"
+        end_date: str    # "2026-03-28"
+        assets: list[str] | None = None  # None = all from WATCHLIST
+
+    # Track running fetch task
+    _fetch_task_state: dict = {"running": False, "progress": {}, "result": None}
+
+    @app.post("/api/fetch-history")
+    async def fetch_history(body: FetchHistoryRequest):
+        """Historische 1-Min-Kerzen von Capital.com laden."""
+        if _fetch_task_state["running"]:
+            return {"status": "already_running", "progress": _fetch_task_state["progress"]}
+
+        from .fetch_history import fetch_all_assets
+
+        def on_progress(asset, chunk_idx, total_chunks, new_bars):
+            _fetch_task_state["progress"] = {
+                "asset": asset,
+                "chunk": chunk_idx,
+                "total_chunks": total_chunks,
+                "new_bars": new_bars,
+            }
+
+        async def _run():
+            _fetch_task_state["running"] = True
+            _fetch_task_state["result"] = None
+            try:
+                results = await fetch_all_assets(
+                    start_date=body.start_date,
+                    end_date=body.end_date,
+                    assets=body.assets,
+                    progress_callback=on_progress,
+                )
+                _fetch_task_state["result"] = results
+            except Exception as exc:
+                _fetch_task_state["result"] = {"error": str(exc)}
+                logger.exception("Fetch history failed: %s", exc)
+            finally:
+                _fetch_task_state["running"] = False
+
+        asyncio.create_task(_run())
+        return {"status": "started", "message": "Download gestartet"}
+
+    @app.get("/api/fetch-history/progress")
+    async def fetch_history_progress():
+        """Fortschritt des laufenden History-Downloads."""
+        return {
+            "running": _fetch_task_state["running"],
+            "progress": _fetch_task_state["progress"],
+            "result": _fetch_task_state["result"],
+        }
+
+    # ── POST /api/run-timeline-sim ───────────────────────────────────────
+    class TimelineSimRequest(BaseModel):
+        start_date: str | None = None
+        end_date: str | None = None
+        assets: list[str] | None = None
+        confidence_threshold: int = 8
+
+    _sim_task_state: dict = {"running": False, "progress": {}, "result": None, "simulator": None}
+
+    @app.post("/api/run-timeline-sim")
+    async def run_timeline_sim(body: TimelineSimRequest):
+        """Zeitstrahl-Simulation im Turbo-Modus starten."""
+        if _sim_task_state["running"]:
+            return {"status": "already_running", "progress": _sim_task_state["progress"]}
+
+        from .timeline_sim import TimelineSimulator
+
+        sim = TimelineSimulator(confidence_threshold=body.confidence_threshold)
+        _sim_task_state["simulator"] = sim
+
+        def on_progress(current, total, open_trades, closed_trades):
+            _sim_task_state["progress"] = {
+                "current_minute": current,
+                "total_minutes": total,
+                "open_trades": open_trades,
+                "closed_trades": closed_trades,
+                "pct": round(current / total * 100, 1) if total > 0 else 0,
+            }
+
+        async def _run():
+            _sim_task_state["running"] = True
+            _sim_task_state["result"] = None
+            try:
+                result = await sim.run(
+                    assets=body.assets,
+                    start_date=body.start_date,
+                    end_date=body.end_date,
+                    progress_callback=on_progress,
+                )
+                _sim_task_state["result"] = result
+            except Exception as exc:
+                _sim_task_state["result"] = {"error": str(exc)}
+                logger.exception("Timeline sim failed: %s", exc)
+            finally:
+                _sim_task_state["running"] = False
+                _sim_task_state["simulator"] = None
+
+        asyncio.create_task(_run())
+        return {"status": "started", "message": "Zeitstrahl-Simulation gestartet"}
+
+    @app.get("/api/timeline-sim/progress")
+    async def timeline_sim_progress():
+        """Fortschritt der laufenden Zeitstrahl-Simulation."""
+        return {
+            "running": _sim_task_state["running"],
+            "progress": _sim_task_state["progress"],
+            "result": _sim_task_state["result"],
+        }
+
+    @app.post("/api/timeline-sim/cancel")
+    async def cancel_timeline_sim():
+        """Laufende Zeitstrahl-Simulation abbrechen."""
+        sim = _sim_task_state.get("simulator")
+        if sim and _sim_task_state["running"]:
+            sim.cancel()
+            return {"status": "cancelling"}
+        return {"status": "not_running"}
 
     return app

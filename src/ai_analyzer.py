@@ -130,6 +130,95 @@ def _scale_confidence(softmax_conf: float) -> int:
     return max(1, min(10, round(scaled)))
 
 
+# ── Finanzrechnung fuer Backtest ────────────────────────────────────────────
+
+# Typische Capital.com Spreads (in Asset-Preis-Einheiten)
+DEFAULT_SPREADS = {
+    "GOLD": 0.30,
+    "SILVER": 0.020,
+    "OIL_CRUDE": 0.030,
+    "NATURALGAS": 0.005,
+}
+
+
+def calculate_trade_financials(
+    asset: str,
+    direction: str,
+    entry_price: float,
+    exit_pnl: float,
+    sl_price: float,
+    capital: float,
+    risk_pct: float,
+    leverage: int,
+    spread: float | None = None,
+    eur_usd: float = 1.08,
+) -> dict:
+    """Berechnet die finanzielle Auswirkung eines Trades.
+
+    Args:
+        asset: Asset-Key (GOLD, SILVER, ...)
+        direction: BUY oder SELL
+        entry_price: Einstiegspreis
+        exit_pnl: P&L in Preis-Einheiten (positiv = Gewinn)
+        sl_price: Stop-Loss-Preis
+        capital: Aktuelles Kapital in EUR
+        risk_pct: Risiko pro Trade (z.B. 0.01 = 1%)
+        leverage: Hebel (z.B. 20)
+        spread: Spread in Preis-Einheiten (None = Default)
+        eur_usd: EUR/USD Kurs fuer Umrechnung
+
+    Returns:
+        Dict mit lot_size, position_value_eur, margin_eur,
+        brutto_pnl_eur, spread_cost_eur, netto_pnl_eur
+    """
+    if spread is None:
+        spread = DEFAULT_SPREADS.get(asset, 0.03)
+
+    # SL-Distanz in Preis-Einheiten
+    sl_distance = abs(entry_price - sl_price)
+    if sl_distance == 0:
+        sl_distance = entry_price * 0.003  # fallback 0.3%
+
+    # Risikobetrag in EUR
+    risk_amount_eur = capital * risk_pct
+
+    # Lotgroesse: wie viele Einheiten kann ich kaufen, sodass SL = risk_amount
+    # P&L in USD = lot_size * price_change_usd
+    # risk_amount_eur * eur_usd = lot_size * sl_distance
+    lot_size = (risk_amount_eur * eur_usd) / sl_distance
+
+    # Positionswert in USD und EUR
+    position_value_usd = lot_size * entry_price
+    position_value_eur = position_value_usd / eur_usd
+
+    # Margin (gebundenes Kapital)
+    margin_eur = position_value_eur / leverage
+
+    # Brutto-P&L: lot_size * exit_pnl (in USD), dann in EUR
+    brutto_pnl_usd = lot_size * exit_pnl
+    brutto_pnl_eur = brutto_pnl_usd / eur_usd
+
+    # Spread-Kosten (einmal beim Einstieg)
+    spread_cost_usd = lot_size * spread
+    spread_cost_eur = spread_cost_usd / eur_usd
+
+    # Netto-P&L
+    netto_pnl_eur = brutto_pnl_eur - spread_cost_eur
+
+    # Margin-Call Check
+    margin_call = margin_eur > capital
+
+    return {
+        "lot_size": round(lot_size, 4),
+        "position_value_eur": round(position_value_eur, 2),
+        "margin_eur": round(margin_eur, 2),
+        "brutto_pnl_eur": round(brutto_pnl_eur, 2),
+        "spread_cost_eur": round(spread_cost_eur, 2),
+        "netto_pnl_eur": round(netto_pnl_eur, 2),
+        "margin_call": margin_call,
+    }
+
+
 def _get_latest_model_path(models_dir: str) -> str:
     """Liefert den Pfad zur neuesten .pt-Datei im models/-Ordner."""
     candidates = glob.glob(os.path.join(models_dir, "*.pt"))
@@ -395,6 +484,11 @@ class DQNAnalyzer:
         with_position: bool = False,
         position_direction: str | None = None,
         position_entry_price: float | None = None,
+        # Finanzparameter (optional)
+        capital: float | None = None,
+        risk_pct: float | None = None,
+        leverage: int | None = None,
+        eur_usd: float = 1.08,
     ) -> dict:
         """Backtest: DQN-Inferenz zum Zeitpunkt eines historischen Trades.
 
@@ -410,6 +504,10 @@ class DQNAnalyzer:
             with_position: Wenn True, wird Position-Info in den State eingebaut
             position_direction: Richtung der offenen Position (fuer with_position)
             position_entry_price: Entry-Preis der offenen Position
+            capital: Kapital in EUR (None = keine Finanzrechnung)
+            risk_pct: Risiko pro Trade (z.B. 0.01 = 1%)
+            leverage: Hebel (z.B. 20)
+            eur_usd: EUR/USD Kurs
         """
         opens, highs, lows, closes = await self._load_candles_from_db(
             asset, before_timestamp=entry_timestamp,
@@ -459,7 +557,7 @@ class DQNAnalyzer:
         else:
             verdict = "UNKLAR"
 
-        return {
+        result = {
             "asset": asset,
             "entry_timestamp": entry_timestamp,
             "candle_count": candle_count,
@@ -480,6 +578,28 @@ class DQNAnalyzer:
             "verdict": verdict,
             "with_position": with_position,
         }
+
+        # Finanzrechnung (optional)
+        if capital is not None and risk_pct is not None and leverage is not None:
+            sl_price = config.DQN_SL_PCT * trade_entry_price
+            if trade_direction == "BUY":
+                sl_abs = trade_entry_price - sl_price
+            else:
+                sl_abs = trade_entry_price + sl_price
+
+            result["financial"] = calculate_trade_financials(
+                asset=asset,
+                direction=trade_direction,
+                entry_price=trade_entry_price,
+                exit_pnl=trade_result_pnl,
+                sl_price=sl_abs,
+                capital=capital,
+                risk_pct=risk_pct,
+                leverage=leverage,
+                eur_usd=eur_usd,
+            )
+
+        return result
 
     async def analyze_market(
         self,

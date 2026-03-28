@@ -87,6 +87,11 @@ DQN_SL_PCT: float = float(os.getenv("DQN_SL_PCT", "0.003"))   # 0.3 % – aus Tr
 DQN_TP_PCT: float = float(os.getenv("DQN_TP_PCT", "0.005"))   # 0.5 % – aus Training
 DQN_DEVICE: str = os.getenv("DQN_DEVICE", "auto")              # "auto" | "cpu" | "cuda"
 
+# ── Backtest Finanz-Defaults ─────────────────────────────────────────────────
+BACKTEST_CAPITAL: float = float(os.getenv("BACKTEST_CAPITAL", "1000.0"))
+BACKTEST_RISK_PCT: float = float(os.getenv("BACKTEST_RISK_PCT", "0.01"))
+BACKTEST_LEVERAGE: int = int(os.getenv("BACKTEST_LEVERAGE", "20"))
+
 # ── Trading parameters ─────────────────────────────────────────────────────────
 MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "4"))  # 1 pro Asset, 4 Assets
 MAX_RISK_PER_TRADE_PCT: float = float(os.getenv("MAX_RISK_PER_TRADE_PCT", "2.0"))   # War: 5.0 – 5% bei 900 EUR war zu aggressiv
@@ -193,6 +198,9 @@ def reload() -> None:
     g["DQN_SL_PCT"] = float(os.getenv("DQN_SL_PCT", "0.003"))
     g["DQN_TP_PCT"] = float(os.getenv("DQN_TP_PCT", "0.005"))
     g["DQN_DEVICE"] = os.getenv("DQN_DEVICE", "auto")
+    g["BACKTEST_CAPITAL"] = float(os.getenv("BACKTEST_CAPITAL", "1000.0"))
+    g["BACKTEST_RISK_PCT"] = float(os.getenv("BACKTEST_RISK_PCT", "0.01"))
+    g["BACKTEST_LEVERAGE"] = int(os.getenv("BACKTEST_LEVERAGE", "20"))
 
     g["MAX_OPEN_POSITIONS"] = int(os.getenv("MAX_OPEN_POSITIONS", "1"))
     g["MAX_RISK_PER_TRADE_PCT"] = float(os.getenv("MAX_RISK_PER_TRADE_PCT", "2.0"))

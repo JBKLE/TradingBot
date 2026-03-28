@@ -129,13 +129,25 @@ class CapitalComBroker:
         epic: str,
         resolution: str = config.PRICE_HISTORY_RESOLUTION,
         max_bars: int = config.PRICE_HISTORY_MAX_BARS,
+        from_date: str | None = None,
+        to_date: str | None = None,
     ) -> list[PriceBar]:
-        """GET /api/v1/prices/{epic} – OHLC candlestick history."""
+        """GET /api/v1/prices/{epic} – OHLC candlestick history.
+
+        Args:
+            from_date: ISO-8601 start (e.g. "2026-01-01T00:00:00")
+            to_date:   ISO-8601 end   (e.g. "2026-03-28T23:59:00")
+        """
         await self._ensure_session()
+        params: dict[str, Any] = {"resolution": resolution, "max": max_bars}
+        if from_date:
+            params["from"] = from_date
+        if to_date:
+            params["to"] = to_date
         data = await self._request(
             "GET",
             f"/api/v1/prices/{epic}",
-            params={"resolution": resolution, "max": max_bars},
+            params=params,
         )
         bars: list[PriceBar] = []
         for price in data.get("prices", []):
