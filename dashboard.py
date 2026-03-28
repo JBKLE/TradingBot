@@ -332,24 +332,91 @@ with tab_trading:
     col_b1, col_b2, col_b3, col_b4 = st.columns(4)
 
     with col_b1:
-        if st.button("ANALYSE STARTEN", width="stretch"):
-            with st.spinner("DQN analysiert den Markt..."):
-                try:
-                    resp = httpx.post(f"{BOT_API_URL}/api/analyze", timeout=120)
-                    if resp.status_code == 200:
-                        result = resp.json()
-                        opp = result.get("best_opportunity", {})
-                        st.success(
-                            f"**{result.get('recommendation')}** | "
-                            f"{opp.get('asset')} {opp.get('direction')} "
-                            f"(Confidence: {opp.get('confidence')}/10, "
-                            f"RR: {opp.get('risk_reward_ratio', 0):.2f})"
-                        )
-                        st.info(result.get("market_summary", ""))
+        if st.button("DQN BACKTEST", width="stretch"):
+            st.session_state["show_backtest"] = True
+
+    # ── Backtest-Panel (aufklappbar) ─────────────────────────────────
+    if st.session_state.get("show_backtest"):
+        with st.container():
+            st.markdown("#### DQN Backtest – Trade analysieren")
+            bt_col1, bt_col2, bt_col3 = st.columns([2, 1, 1])
+            with bt_col1:
+                bt_source = st.selectbox("Quelle", ["sim", "real"], key="bt_source")
+            with bt_col2:
+                bt_with_pos = st.checkbox("Mit Position-Info", key="bt_with_pos")
+            with bt_col3:
+                bt_limit = st.number_input("Trades laden", value=30, min_value=5, max_value=200, key="bt_limit")
+
+            # Trades laden
+            try:
+                resp = httpx.get(
+                    f"{BOT_API_URL}/api/backtest/trades",
+                    params={"source": bt_source, "limit": bt_limit},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    bt_trades = resp.json().get("trades", [])
+                    if not bt_trades:
+                        st.warning("Keine abgeschlossenen Trades gefunden")
                     else:
-                        st.error(f"Fehler: {resp.status_code} – {resp.text[:200]}")
-                except Exception as e:
-                    st.error(f"API nicht erreichbar: {e}")
+                        options = {
+                            f"#{t['id']} {t['asset']} {t['direction']} "
+                            f"{'%.4f' % t['entry_price']} → P/L: {'%.2f' % (t['pnl'] or 0)} "
+                            f"({t['status']}) {(t.get('entry_timestamp') or '')[:16]}": t
+                            for t in bt_trades
+                        }
+                        selected = st.selectbox("Trade auswaehlen", list(options.keys()), key="bt_trade_select")
+                        sel_trade = options[selected]
+
+                        if st.button("ANALYSIEREN", width="stretch", key="bt_run"):
+                            with st.spinner("DQN analysiert Trade..."):
+                                try:
+                                    bt_resp = httpx.post(
+                                        f"{BOT_API_URL}/api/backtest/{sel_trade['id']}",
+                                        params={
+                                            "source": bt_source,
+                                            "with_position": str(bt_with_pos).lower(),
+                                        },
+                                        timeout=30,
+                                    )
+                                    if bt_resp.status_code == 200:
+                                        r = bt_resp.json()
+                                        verdict = r.get("verdict", "?")
+                                        v_color = {"MATCH": "green", "BESSER": "blue", "MISS": "red"}.get(verdict, "gray")
+
+                                        st.markdown(
+                                            f"### Ergebnis: :{v_color}[**{verdict}**]"
+                                        )
+                                        rc1, rc2 = st.columns(2)
+                                        with rc1:
+                                            st.markdown("**Echter Trade**")
+                                            st.markdown(
+                                                f"- Richtung: **{r['trade_direction']}**\n"
+                                                f"- Entry: {r['trade_entry_price']:.4f}\n"
+                                                f"- P/L: **{r['trade_pnl']:+.2f}** "
+                                                f"({'Gewinn' if r['trade_won'] else 'Verlust'})"
+                                            )
+                                        with rc2:
+                                            st.markdown("**DQN-Entscheidung**")
+                                            st.markdown(
+                                                f"- Aktion: **{r['dqn_action']}** "
+                                                f"(Confidence: {r['dqn_confidence']}/10)\n"
+                                                f"- SL: {r['dqn_sl'] or '-'}\n"
+                                                f"- TP: {r['dqn_tp'] or '-'}"
+                                            )
+                                        st.markdown(
+                                            f"**Q-Werte:** {r['dqn_q_values']} | "
+                                            f"Kerzen: {r['candle_count']}/500 | "
+                                            f"Position-Info: {'Ja' if r['with_position'] else 'Nein'}"
+                                        )
+                                    else:
+                                        st.error(f"Fehler: {bt_resp.status_code} – {bt_resp.text[:200]}")
+                                except Exception as e:
+                                    st.error(f"Backtest fehlgeschlagen: {e}")
+                else:
+                    st.error(f"Trades laden fehlgeschlagen: {resp.status_code}")
+            except Exception as e:
+                st.error(f"API nicht erreichbar: {e}")
 
     with col_b2:
         if st.button("TAGESBILANZ", width="stretch"):

@@ -78,6 +78,120 @@ def create_api() -> FastAPI:
             logger.exception("API analysis failed: %s", exc)
             raise HTTPException(500, str(exc))
 
+    # ── POST /api/backtest/{trade_id} ─────────────────────────────────────
+    @app.post("/api/backtest/{trade_id}")
+    async def backtest_trade(trade_id: int, source: str = "sim", with_position: bool = False):
+        """Backtest: DQN-Inferenz zum Zeitpunkt eines historischen Trades.
+
+        Args:
+            trade_id: ID des Trades
+            source: "sim" (simulation.db) oder "real" (trades.db)
+            with_position: Wenn true, wird Position-Info in den State eingebaut
+        """
+        try:
+            if source == "sim":
+                from .sim_database import get_sim_trade_by_id
+                trade = await get_sim_trade_by_id(trade_id)
+                if not trade:
+                    raise HTTPException(404, f"Sim-Trade {trade_id} nicht gefunden")
+                if trade.status.value == "open":
+                    raise HTTPException(400, "Trade ist noch offen")
+                asset = trade.asset
+                entry_ts = trade.entry_timestamp.isoformat()
+                direction = trade.direction.value
+                entry_price = trade.entry_price
+                pnl = trade.pnl or 0.0
+            elif source == "real":
+                trade = await database.get_trade_by_id(trade_id)
+                if not trade:
+                    raise HTTPException(404, f"Trade {trade_id} nicht gefunden")
+                if trade.status.value == "OPEN":
+                    raise HTTPException(400, "Trade ist noch offen")
+                asset = trade.asset
+                entry_ts = trade.timestamp.isoformat()
+                direction = trade.direction.value
+                entry_price = trade.entry_price
+                pnl = trade.profit_loss or 0.0
+            else:
+                raise HTTPException(400, "source muss 'sim' oder 'real' sein")
+
+            analyzer = DQNAnalyzer()
+            result = await analyzer.backtest_trade(
+                asset=asset,
+                entry_timestamp=entry_ts,
+                trade_direction=direction,
+                trade_entry_price=entry_price,
+                trade_result_pnl=pnl,
+                with_position=with_position,
+                position_direction=direction if with_position else None,
+                position_entry_price=entry_price if with_position else None,
+            )
+
+            if "error" in result:
+                raise HTTPException(422, result["error"])
+
+            return result
+
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Backtest failed: %s", exc)
+            raise HTTPException(500, str(exc))
+
+    # ── GET /api/backtest/trades ────────────────────────────────────────
+    @app.get("/api/backtest/trades")
+    async def get_backtest_trades(source: str = "sim", limit: int = 50):
+        """Liste abgeschlossener Trades fuer Backtest-Auswahl."""
+        try:
+            if source == "sim":
+                from .sim_database import get_closed_sim_trades
+                trades = await get_closed_sim_trades(limit=limit)
+                return {
+                    "source": "sim",
+                    "trades": [
+                        {
+                            "id": t.id,
+                            "asset": t.asset,
+                            "direction": t.direction.value,
+                            "variant": t.sl_variant.value,
+                            "entry_price": t.entry_price,
+                            "exit_price": t.exit_price,
+                            "pnl": t.pnl,
+                            "r_multiple": t.r_multiple,
+                            "status": t.status.value,
+                            "entry_timestamp": t.entry_timestamp.isoformat(),
+                            "exit_timestamp": t.exit_timestamp.isoformat() if t.exit_timestamp else None,
+                        }
+                        for t in trades
+                    ],
+                }
+            elif source == "real":
+                trades = await database.get_recent_trades(days=30)
+                closed = [t for t in trades if t.profit_loss is not None]
+                return {
+                    "source": "real",
+                    "trades": [
+                        {
+                            "id": t.id,
+                            "asset": t.asset,
+                            "direction": t.direction.value,
+                            "entry_price": t.entry_price,
+                            "exit_price": t.exit_price,
+                            "pnl": t.profit_loss,
+                            "status": t.status.value,
+                            "entry_timestamp": t.timestamp.isoformat(),
+                            "exit_timestamp": t.exit_timestamp.isoformat() if t.exit_timestamp else None,
+                        }
+                        for t in closed
+                    ],
+                }
+            else:
+                raise HTTPException(400, "source muss 'sim' oder 'real' sein")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+
     # ── POST /api/daily-summary ─────────────────────────────────────────
     @app.post("/api/daily-summary")
     async def trigger_daily_summary():

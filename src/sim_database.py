@@ -172,6 +172,30 @@ async def get_sim_trade_stats() -> dict:
     return {row[0]: row[1] for row in rows}
 
 
+async def get_sim_trade_by_id(trade_id: int) -> Optional[SimTrade]:
+    """Fetch a single sim trade by ID."""
+    async with aiosqlite.connect(config.SIM_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM sim_trades WHERE id = ?", (trade_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+    return _row_to_sim_trade(row) if row else None
+
+
+async def get_closed_sim_trades(limit: int = 100) -> list[SimTrade]:
+    """Fetch recently closed sim trades (for backtest selection)."""
+    async with aiosqlite.connect(config.SIM_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM sim_trades WHERE status != 'open' "
+            "ORDER BY exit_timestamp DESC LIMIT ?",
+            (limit,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [_row_to_sim_trade(r) for r in rows]
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _row_to_sim_trade(row: aiosqlite.Row) -> SimTrade:

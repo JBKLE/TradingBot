@@ -173,14 +173,32 @@ class DQNAnalyzer:
     # ── State-Vektor aus DB (identisch zu TradeAI/predict.py) ───────────────
 
     @staticmethod
-    async def _load_candles_from_db(asset: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Liest die letzten 500 Kerzen aus price_history (simulation.db)."""
+    async def _load_candles_from_db(
+        asset: str,
+        before_timestamp: str | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Liest die letzten 500 Kerzen aus price_history (simulation.db).
+
+        Args:
+            asset: Asset-Key (z.B. "GOLD")
+            before_timestamp: Wenn gesetzt, nur Kerzen VOR diesem Zeitpunkt (ISO-Format).
+                              Fuer Backtest: Kerzen vor dem Trade-Entry laden.
+        """
         async with aiosqlite.connect(config.SIM_DB_PATH) as db:
-            async with db.execute(
-                "SELECT open, high, low, close FROM price_history "
-                "WHERE asset = ? ORDER BY timestamp DESC LIMIT ?",
-                (asset, MAX_WINDOW),
-            ) as cursor:
+            if before_timestamp:
+                query = (
+                    "SELECT open, high, low, close FROM price_history "
+                    "WHERE asset = ? AND timestamp <= ? "
+                    "ORDER BY timestamp DESC LIMIT ?"
+                )
+                params = (asset, before_timestamp, MAX_WINDOW)
+            else:
+                query = (
+                    "SELECT open, high, low, close FROM price_history "
+                    "WHERE asset = ? ORDER BY timestamp DESC LIMIT ?"
+                )
+                params = (asset, MAX_WINDOW)
+            async with db.execute(query, params) as cursor:
                 rows = await cursor.fetchall()
 
         if not rows:
@@ -366,6 +384,102 @@ class DQNAnalyzer:
                 asset, sig["action"], sig["confidence"], sig["q_values"],
             )
         return signals
+
+    async def backtest_trade(
+        self,
+        asset: str,
+        entry_timestamp: str,
+        trade_direction: str,
+        trade_entry_price: float,
+        trade_result_pnl: float,
+        with_position: bool = False,
+        position_direction: str | None = None,
+        position_entry_price: float | None = None,
+    ) -> dict:
+        """Backtest: DQN-Inferenz zum Zeitpunkt eines historischen Trades.
+
+        Laedt 500 Kerzen VOR entry_timestamp aus der DB und laesst die KI
+        blind entscheiden. Vergleicht dann mit dem echten Trade-Ergebnis.
+
+        Args:
+            asset: Asset-Key (z.B. "GOLD")
+            entry_timestamp: ISO-Zeitpunkt des Trade-Entries
+            trade_direction: "BUY" oder "SELL" (echter Trade)
+            trade_entry_price: Entry-Preis des echten Trades
+            trade_result_pnl: P/L des echten Trades
+            with_position: Wenn True, wird Position-Info in den State eingebaut
+            position_direction: Richtung der offenen Position (fuer with_position)
+            position_entry_price: Entry-Preis der offenen Position
+        """
+        opens, highs, lows, closes = await self._load_candles_from_db(
+            asset, before_timestamp=entry_timestamp,
+        )
+
+        candle_count = len(closes)
+        if candle_count == 0:
+            return {
+                "error": f"Keine Kerzen vor {entry_timestamp} fuer {asset} in der DB",
+                "candle_count": 0,
+            }
+
+        # Position-Info optional einbauen
+        open_pos = None
+        if with_position and position_direction and position_entry_price:
+            epic = config.WATCHLIST.get(asset, {}).get("epic", asset)
+            open_pos = PositionInfo(
+                deal_id="backtest",
+                epic=epic,
+                direction=Direction(position_direction),
+                size=1.0,
+                entry_price=position_entry_price,
+                current_price=float(closes[-1]),
+                stop_loss=0.0,
+                take_profit=0.0,
+                profit_loss=0.0,
+                profit_loss_pct=0.0,
+            )
+
+        state, current_price = self._build_state_from_arrays(
+            asset, opens, highs, lows, closes, open_pos,
+        )
+        signal = self._infer(state, current_price, asset)
+
+        # Bewertung: DQN vs. echter Trade
+        dqn_action = signal["action"]
+        trade_won = trade_result_pnl > 0
+
+        if dqn_action == trade_direction:
+            verdict = "MATCH"
+        elif dqn_action == "HOLD":
+            verdict = "BESSER" if not trade_won else "MISS"
+        elif dqn_action in ("BUY", "SELL") and dqn_action != trade_direction:
+            verdict = "BESSER" if not trade_won else "MISS"
+        elif dqn_action == "CLOSE":
+            verdict = "BESSER" if not trade_won else "MISS"
+        else:
+            verdict = "UNKLAR"
+
+        return {
+            "asset": asset,
+            "entry_timestamp": entry_timestamp,
+            "candle_count": candle_count,
+            "current_price_at_entry": current_price,
+            # Echter Trade
+            "trade_direction": trade_direction,
+            "trade_entry_price": trade_entry_price,
+            "trade_pnl": trade_result_pnl,
+            "trade_won": trade_won,
+            # DQN-Entscheidung
+            "dqn_action": dqn_action,
+            "dqn_confidence": signal["confidence"],
+            "dqn_softmax": signal["softmax_confidence"],
+            "dqn_q_values": signal["q_values"],
+            "dqn_sl": signal["sl"],
+            "dqn_tp": signal["tp"],
+            # Bewertung
+            "verdict": verdict,
+            "with_position": with_position,
+        }
 
     async def analyze_market(
         self,
