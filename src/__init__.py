@@ -1,1 +1,1 @@
-"""Commodities Trading Bot – Capital.com + Claude AI."""
+"""Commodities Trading Bot – Capital.com + DQN AI."""

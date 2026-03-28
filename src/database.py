@@ -185,7 +185,7 @@ async def get_open_trades() -> list[Trade]:
 
 
 async def save_analysis(analysis: AnalysisResult) -> None:
-    """Persist a Claude market analysis."""
+    """Persist a market analysis."""
     async with aiosqlite.connect(config.DB_PATH) as db:
         await db.execute(
             """
@@ -336,7 +336,7 @@ async def save_account_snapshot(balance: float, equity: float, open_positions: i
 
 
 async def save_trade_review(trade_id: int, review_data: dict) -> int:
-    """Speichert ein Post-Trade Review von Claude."""
+    """Speichert ein Post-Trade Review."""
     async with aiosqlite.connect(config.DB_PATH) as db:
         cursor = await db.execute(
             """INSERT OR REPLACE INTO trade_reviews

@@ -10,11 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from . import config, database
-from .analyzer import MarketAnalyzer
+from .ai_analyzer import DQNAnalyzer
 from .broker import CapitalComBroker, CapitalComError
 from .env_writer import read_env_file, update_env_file
-from .indicators import calculate_all
-from .news_analyzer import NewsAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -55,74 +53,27 @@ def create_api() -> FastAPI:
     # ── POST /api/analyze ───────────────────────────────────────────────
     @app.post("/api/analyze")
     async def trigger_analysis():
-        """Sofort-Analyse ohne Trade-Ausfuehrung."""
+        """Sofort-DQN-Analyse aus DB (0 Broker-Calls fuer Inferenz)."""
         try:
             async with CapitalComBroker() as broker:
-                account = await broker.get_account_balance()
                 open_positions = await broker.get_open_positions()
 
-                # Marktdaten laden
-                market_data = {}
-                for asset_key, asset_info in config.WATCHLIST.items():
-                    epic = asset_info["epic"]
-                    try:
-                        data = await broker.get_market_prices(epic)
-                        history = await broker.get_price_history(epic)
-                        data.price_history = history
-                        if config.TRADING_STYLE == "intraday":
-                            try:
-                                daily_bars = await broker.get_price_history(
-                                    epic, resolution="DAY", max_bars=30,
-                                )
-                                data.daily_price_history = daily_bars
-                            except CapitalComError:
-                                pass
-                        market_data[asset_key] = data
-                    except CapitalComError as exc:
-                        logger.warning("Could not fetch %s: %s", asset_key, exc)
-
-                if not market_data:
-                    raise HTTPException(502, "No market data available")
-
-                # Indikatoren
-                indicators = {}
-                for asset_key, data in market_data.items():
-                    bars = data.daily_price_history or data.price_history
-                    if bars:
-                        indicators[asset_key] = calculate_all(bars)
-
-                # News + Lern-Kontext
-                news = NewsAnalyzer()
-                market_context = await news.get_market_context()
-                performance_stats = await database.get_performance_stats()
-                recent_lessons = await database.get_recent_lessons(limit=10)
-
-                # Claude Analyse
-                analyzer = MarketAnalyzer()
-                analysis = await analyzer.analyze_market(
-                    market_data=market_data,
-                    account_balance=account.balance,
-                    open_positions=open_positions,
-                    market_context=market_context,
-                    indicators=indicators,
-                    performance_stats=performance_stats,
-                    recent_lessons=recent_lessons,
-                )
-                await database.save_analysis(analysis)
+                # DQN-Inferenz fuer alle 4 Assets (State aus price_history DB)
+                analyzer = DQNAnalyzer()
+                signals = await analyzer.get_all_signals(open_positions)
 
                 logger.info(
-                    "API-Analyse: %s | %s %s (Confidence: %d)",
-                    analysis.recommendation.value,
-                    analysis.best_opportunity.asset,
-                    analysis.best_opportunity.direction.value,
-                    analysis.best_opportunity.confidence,
+                    "API-Analyse: %s",
+                    " | ".join(f"{s['asset']}={s['action']}({s['confidence']}/10)" for s in signals),
                 )
-                return analysis.model_dump()
+                return {
+                    "signals": signals,
+                    "open_positions": len(open_positions),
+                    "timestamp": datetime.now(tz=config.TZ).isoformat(),
+                }
 
         except CapitalComError as exc:
             raise HTTPException(502, f"Capital.com API error: {exc}")
-        except HTTPException:
-            raise
         except Exception as exc:
             logger.exception("API analysis failed: %s", exc)
             raise HTTPException(500, str(exc))
@@ -130,7 +81,7 @@ def create_api() -> FastAPI:
     # ── POST /api/daily-summary ─────────────────────────────────────────
     @app.post("/api/daily-summary")
     async def trigger_daily_summary():
-        """Tagesbilanz mit Claude-Zusammenfassung."""
+        """Tagesbilanz mit DQN-Zusammenfassung."""
         try:
             trades_today = await database.get_trades_today()
             closed = [t for t in trades_today if t.profit_loss is not None]
@@ -138,9 +89,9 @@ def create_api() -> FastAPI:
             balance = await database.get_latest_balance()
             stats = await database.get_performance_stats()
 
-            # Claude-Zusammenfassung
-            analyzer = MarketAnalyzer()
-            claude_summary = await analyzer.generate_summary(
+            # DQN-Zusammenfassung
+            analyzer = DQNAnalyzer()
+            ai_summary = await analyzer.generate_summary(
                 trades=closed,
                 balance=balance,
                 performance_stats=stats,
@@ -160,7 +111,7 @@ def create_api() -> FastAPI:
                     }
                     for t in closed
                 ],
-                "claude_summary": claude_summary,
+                "ai_summary": ai_summary,
             }
         except Exception as exc:
             logger.exception("Daily summary failed: %s", exc)
@@ -169,7 +120,7 @@ def create_api() -> FastAPI:
     # ── POST /api/trade-review/{trade_id} ───────────────────────────────
     @app.post("/api/trade-review/{trade_id}")
     async def trigger_trade_review(trade_id: int):
-        """Post-Trade Review durch Claude."""
+        """Post-Trade Review."""
         try:
             trade = await database.get_trade_by_id(trade_id)
             if not trade:
@@ -187,7 +138,7 @@ def create_api() -> FastAPI:
             except Exception:
                 pass
 
-            analyzer = MarketAnalyzer()
+            analyzer = DQNAnalyzer()
             review = await analyzer.review_trade(trade, price_bars_after)
 
             # Review in DB speichern
@@ -209,15 +160,15 @@ def create_api() -> FastAPI:
     # ── POST /api/weekly-report ─────────────────────────────────────────
     @app.post("/api/weekly-report")
     async def trigger_weekly_report():
-        """Wochenreport mit Claude-Analyse."""
+        """Wochenreport mit DQN-Analyse."""
         try:
             trades = await database.get_recent_trades(days=7)
             closed = [t for t in trades if t.profit_loss is not None]
             balance = await database.get_latest_balance()
             stats = await database.get_performance_stats()
 
-            analyzer = MarketAnalyzer()
-            claude_summary = await analyzer.generate_summary(
+            analyzer = DQNAnalyzer()
+            ai_summary = await analyzer.generate_summary(
                 trades=closed,
                 balance=balance,
                 performance_stats=stats,
@@ -228,7 +179,7 @@ def create_api() -> FastAPI:
                 "trades_count": len(closed),
                 "total_pl": sum(t.profit_loss for t in closed if t.profit_loss),
                 "balance": balance,
-                "claude_summary": claude_summary,
+                "ai_summary": ai_summary,
             }
         except Exception as exc:
             logger.exception("Weekly report failed: %s", exc)
@@ -317,33 +268,34 @@ def create_api() -> FastAPI:
                 "message": f"Verbindung fehlgeschlagen: {exc}",
             }
 
-    # ── POST /api/test/anthropic ─────────────────────────────────────
-    @app.post("/api/test/anthropic")
-    async def test_anthropic_api():
-        """Testet die Anthropic Claude API (kurzer Ping-Request)."""
+    # ── POST /api/test/dqn ──────────────────────────────────────────
+    @app.post("/api/test/dqn")
+    async def test_dqn_model():
+        """Testet ob das DQN-Modell geladen werden kann."""
         t0 = time.time()
         try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-            response = client.messages.create(
-                model=config.CLAUDE_MODEL,
-                max_tokens=10,
-                messages=[{"role": "user", "content": "Antworte nur mit: OK"}],
-            )
+            from .ai_analyzer import _get_latest_model_path, DuelingDQN, ACTION_SIZE
+            import torch
+            model_path = _get_latest_model_path(config.AI_MODELS_DIR)
+            model_name = os.path.basename(model_path)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            net = DuelingDQN(ACTION_SIZE).to(device)
+            ckpt = torch.load(model_path, map_location=device, weights_only=True)
+            net.load_state_dict(ckpt["policy_net"])
             latency_ms = int((time.time() - t0) * 1000)
-            text = response.content[0].text if response.content else ""
             return {
                 "status": "ok",
                 "latency_ms": latency_ms,
-                "model": config.CLAUDE_MODEL,
-                "message": f"Claude antwortet: {text}",
+                "model": model_name,
+                "device": str(device),
+                "message": f"DQN-Modell geladen: {model_name} ({device})",
             }
         except Exception as exc:
             latency_ms = int((time.time() - t0) * 1000)
             return {
                 "status": "error",
                 "latency_ms": latency_ms,
-                "message": f"Anthropic Fehler: {exc}",
+                "message": f"DQN Fehler: {exc}",
             }
 
     # ── POST /api/test/ntfy ──────────────────────────────────────────
@@ -383,45 +335,6 @@ def create_api() -> FastAPI:
                 "status": "error",
                 "latency_ms": latency_ms,
                 "message": f"ntfy Fehler: {exc}",
-            }
-
-    # ── POST /api/test/news ──────────────────────────────────────────
-    @app.post("/api/test/news")
-    async def test_news_api():
-        """Testet die NewsAPI-Verbindung."""
-        t0 = time.time()
-        if not config.NEWS_API_KEY:
-            return {
-                "status": "error",
-                "latency_ms": 0,
-                "message": "NEWS_API_KEY nicht konfiguriert",
-            }
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(
-                    "https://newsapi.org/v2/top-headlines",
-                    params={
-                        "apiKey": config.NEWS_API_KEY,
-                        "category": "business",
-                        "pageSize": 1,
-                        "language": "en",
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-            latency_ms = int((time.time() - t0) * 1000)
-            total = data.get("totalResults", 0)
-            return {
-                "status": "ok",
-                "latency_ms": latency_ms,
-                "message": f"NewsAPI erreichbar – {total} Artikel verfuegbar",
-            }
-        except Exception as exc:
-            latency_ms = int((time.time() - t0) * 1000)
-            return {
-                "status": "error",
-                "latency_ms": latency_ms,
-                "message": f"NewsAPI Fehler: {exc}",
             }
 
     # ── GET /api/settings ────────────────────────────────────────────

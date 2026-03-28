@@ -13,18 +13,12 @@ SETTINGS_SCHEMA: list[dict] = [
     {"key": "TRADING_ENABLED", "label": "Trading aktiv", "group": "Kill-Switch",
      "type": "bool", "description": "Master-Schalter fuer Trade-Ausfuehrung"},
     # Trading
-    {"key": "TRADING_STYLE", "label": "Trading Style", "group": "Trading",
-     "type": "select", "options": ["swing", "intraday"],
-     "description": "Swing = Tageskerzen, Intraday = Stundenkerzen"},
-    {"key": "CLAUDE_MODEL", "label": "Claude Modell", "group": "Trading",
-     "type": "select", "options": [
-         "claude-opus-4-6",
-         "claude-opus-4-5",
-         "claude-sonnet-4-6",
-         "claude-sonnet-4-5",
-         "claude-sonnet-4-0",
-         "claude-haiku-4-5",
-     ], "description": "Claude Modell fuer Marktanalyse"},
+    {"key": "DQN_SL_PCT", "label": "DQN Stop-Loss (%)", "group": "Trading",
+     "type": "float", "min": 0.001, "max": 0.05, "step": 0.001,
+     "description": "Stop-Loss Prozentsatz aus DQN-Training"},
+    {"key": "DQN_TP_PCT", "label": "DQN Take-Profit (%)", "group": "Trading",
+     "type": "float", "min": 0.001, "max": 0.05, "step": 0.001,
+     "description": "Take-Profit Prozentsatz aus DQN-Training"},
     # Risiko
     {"key": "MAX_RISK_PER_TRADE_PCT", "label": "Max Risiko pro Trade (%)", "group": "Risiko",
      "type": "float", "min": 0.5, "max": 10.0, "step": 0.5},
@@ -87,15 +81,17 @@ CAPITAL_BASE_URL: str = (
     else "https://api-capital.backend-capital.com"
 )
 
-# ── Anthropic Claude API ───────────────────────────────────────────────────────
-ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+# ── DQN-Modell Konfiguration ──────────────────────────────────────────────────
+AI_MODELS_DIR: str = os.getenv("AI_MODELS_DIR", os.path.join(os.path.dirname(__file__), "..", "models"))
+DQN_SL_PCT: float = float(os.getenv("DQN_SL_PCT", "0.003"))   # 0.3 % – aus Training
+DQN_TP_PCT: float = float(os.getenv("DQN_TP_PCT", "0.005"))   # 0.5 % – aus Training
+DQN_DEVICE: str = os.getenv("DQN_DEVICE", "auto")              # "auto" | "cpu" | "cuda"
 
 # ── Trading parameters ─────────────────────────────────────────────────────────
-MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "1"))
+MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "4"))  # 1 pro Asset, 4 Assets
 MAX_RISK_PER_TRADE_PCT: float = float(os.getenv("MAX_RISK_PER_TRADE_PCT", "2.0"))   # War: 5.0 – 5% bei 900 EUR war zu aggressiv
-MIN_CONFIDENCE_SCORE: int = int(os.getenv("MIN_CONFIDENCE_SCORE", "8"))             # War: 7 – Claude vergibt 7 zu leicht
-MIN_RISK_REWARD_RATIO: float = float(os.getenv("MIN_RISK_REWARD_RATIO", "1.8"))     # War: 1.5
+MIN_CONFIDENCE_SCORE: int = int(os.getenv("MIN_CONFIDENCE_SCORE", "8"))             # DQN-Softmax >= 0.83
+MIN_RISK_REWARD_RATIO: float = float(os.getenv("MIN_RISK_REWARD_RATIO", "1.5"))     # DQN trainiert auf TP/SL = 0.5/0.3 = 1.67
 ACCOUNT_BALANCE_LIMIT: float = float(os.getenv("ACCOUNT_BALANCE_LIMIT", "500.0"))
 
 # Kill-switch – set TRADING_ENABLED=false to stop all trade execution
@@ -113,7 +109,6 @@ WATCHLIST: dict[str, dict[str, str]] = {
 ANALYSIS_SCHEDULE: str = os.getenv("ANALYSIS_SCHEDULE", "0 8,12,16 * * 1-5")
 TRADE_WINDOW_START: str = os.getenv("TRADE_WINDOW_START", "09:00")
 TRADE_WINDOW_END: str = os.getenv("TRADE_WINDOW_END", "20:00")
-INTRADAY_CLOSE_TIME: str = os.getenv("INTRADAY_CLOSE_TIME", "21:30")
 TIMEZONE: str = os.getenv("TIMEZONE", "Europe/Berlin")
 TZ = ZoneInfo(TIMEZONE)
 
@@ -130,14 +125,6 @@ SIM_DB_PATH: str = os.path.join(DATA_DIR, "simulation.db")
 NTFY_TOPIC: str = os.getenv("NTFY_TOPIC", "")
 NTFY_SERVER: str = os.getenv("NTFY_SERVER", "https://ntfy.sh")
 
-# ── News-Analyse ──────────────────────────────────────────────────────────────
-NEWS_API_KEY: str = os.getenv("NEWS_API_KEY", "")
-NEWS_FETCH_INTERVAL_SECONDS: int = int(os.getenv("NEWS_FETCH_INTERVAL_HOURS", "4")) * 3600
-NEWS_KEYWORDS: list[str] = [
-    "oil", "gold", "silver", "gas", "commodities",
-    "fed", "ecb", "tariff", "sanctions", "opec",
-    "inflation", "recession",
-]
 
 # ── Volatilitäts-Gate ──────────────────────────────────────────────────────────
 ATR_LOOKBACK_PERIOD: int = int(os.getenv("ATR_LOOKBACK_PERIOD", "14"))
@@ -145,8 +132,8 @@ MAX_ATR_MULTIPLIER: float = float(os.getenv("MAX_ATR_MULTIPLIER", "2.0"))
 # Wenn aktueller ATR > Durchschnitts-ATR × MAX_ATR_MULTIPLIER → kein Trade
 
 # Overtrading-Schutz
-MAX_TRADES_PER_DAY: int = int(os.getenv("MAX_TRADES_PER_DAY", "1"))
-COOLDOWN_AFTER_LOSS_MINUTES: int = int(os.getenv("COOLDOWN_AFTER_LOSS_MINUTES", "120"))
+MAX_TRADES_PER_DAY: int = int(os.getenv("MAX_TRADES_PER_DAY", "5"))
+COOLDOWN_AFTER_LOSS_MINUTES: int = int(os.getenv("COOLDOWN_AFTER_LOSS_MINUTES", "60"))
 
 # Stop-Loss Konfiguration (ATR-basiert)
 SL_ATR_MULTIPLIER: float = float(os.getenv("SL_ATR_MULTIPLIER", "1.5"))
@@ -183,17 +170,11 @@ RECHECK_MIN_MINUTES: int = int(os.getenv("RECHECK_MIN_MINUTES", "15"))
 RECHECK_MAX_MINUTES: int = int(os.getenv("RECHECK_MAX_MINUTES", "180"))
 RECHECK_EXPIRE_TIME: str = os.getenv("RECHECK_EXPIRE_TIME", "20:00")
 
-# ── Trading Style ──────────────────────────────────────────────────────────────
-# "swing"   → Tageskerzen, 30 Bars, mittelfristige Trends (Standard)
-# "intraday" → Stundenkerzen, 48 Bars, kurze Trades ohne Overnight-Gebühren
-TRADING_STYLE: str = os.getenv("TRADING_STYLE", "swing").lower()
-
-# ── Price history ──────────────────────────────────────────────────────────────
-PRICE_HISTORY_DAYS: int = 7
-_default_resolution = "HOUR" if TRADING_STYLE == "intraday" else "DAY"
-_default_bars = 48 if TRADING_STYLE == "intraday" else 30
-PRICE_HISTORY_RESOLUTION: str = os.getenv("PRICE_HISTORY_RESOLUTION", _default_resolution)
-PRICE_HISTORY_MAX_BARS: int = int(os.getenv("PRICE_HISTORY_MAX_BARS", str(_default_bars)))
+# ── Price history (Broker-API Fallback fuer Indikatoren/ATR-Gate) ─────────────
+# DQN nutzt 1-Min-Kerzen aus der DB. Diese Werte sind nur fuer ATR-Berechnung
+# im strategy.py (DAY-Kerzen fuer Volatilitaets-Gate).
+PRICE_HISTORY_RESOLUTION: str = os.getenv("PRICE_HISTORY_RESOLUTION", "DAY")
+PRICE_HISTORY_MAX_BARS: int = int(os.getenv("PRICE_HISTORY_MAX_BARS", "30"))
 
 
 def reload() -> None:
@@ -208,32 +189,31 @@ def reload() -> None:
         if g["CAPITAL_DEMO"]
         else "https://api-capital.backend-capital.com"
     )
-    g["CLAUDE_MODEL"] = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+    g["AI_MODELS_DIR"] = os.getenv("AI_MODELS_DIR", os.path.join(os.path.dirname(__file__), "..", "models"))
+    g["DQN_SL_PCT"] = float(os.getenv("DQN_SL_PCT", "0.003"))
+    g["DQN_TP_PCT"] = float(os.getenv("DQN_TP_PCT", "0.005"))
+    g["DQN_DEVICE"] = os.getenv("DQN_DEVICE", "auto")
 
     g["MAX_OPEN_POSITIONS"] = int(os.getenv("MAX_OPEN_POSITIONS", "1"))
     g["MAX_RISK_PER_TRADE_PCT"] = float(os.getenv("MAX_RISK_PER_TRADE_PCT", "2.0"))
     g["MIN_CONFIDENCE_SCORE"] = int(os.getenv("MIN_CONFIDENCE_SCORE", "8"))
-    g["MIN_RISK_REWARD_RATIO"] = float(os.getenv("MIN_RISK_REWARD_RATIO", "1.8"))
+    g["MIN_RISK_REWARD_RATIO"] = float(os.getenv("MIN_RISK_REWARD_RATIO", "1.5"))
     g["ACCOUNT_BALANCE_LIMIT"] = float(os.getenv("ACCOUNT_BALANCE_LIMIT", "500.0"))
     g["TRADING_ENABLED"] = os.getenv("TRADING_ENABLED", "true").lower() == "true"
 
     g["ANALYSIS_SCHEDULE"] = os.getenv("ANALYSIS_SCHEDULE", "0 8,12,16 * * 1-5")
     g["TRADE_WINDOW_START"] = os.getenv("TRADE_WINDOW_START", "09:00")
     g["TRADE_WINDOW_END"] = os.getenv("TRADE_WINDOW_END", "20:00")
-    g["INTRADAY_CLOSE_TIME"] = os.getenv("INTRADAY_CLOSE_TIME", "21:30")
     g["TIMEZONE"] = os.getenv("TIMEZONE", "Europe/Berlin")
     g["TZ"] = ZoneInfo(g["TIMEZONE"])
 
     g["NTFY_TOPIC"] = os.getenv("NTFY_TOPIC", "")
     g["NTFY_SERVER"] = os.getenv("NTFY_SERVER", "https://ntfy.sh")
 
-    g["NEWS_API_KEY"] = os.getenv("NEWS_API_KEY", "")
-    g["NEWS_FETCH_INTERVAL_SECONDS"] = int(os.getenv("NEWS_FETCH_INTERVAL_HOURS", "4")) * 3600
-
     g["ATR_LOOKBACK_PERIOD"] = int(os.getenv("ATR_LOOKBACK_PERIOD", "14"))
     g["MAX_ATR_MULTIPLIER"] = float(os.getenv("MAX_ATR_MULTIPLIER", "2.0"))
-    g["MAX_TRADES_PER_DAY"] = int(os.getenv("MAX_TRADES_PER_DAY", "1"))
-    g["COOLDOWN_AFTER_LOSS_MINUTES"] = int(os.getenv("COOLDOWN_AFTER_LOSS_MINUTES", "120"))
+    g["MAX_TRADES_PER_DAY"] = int(os.getenv("MAX_TRADES_PER_DAY", "5"))
+    g["COOLDOWN_AFTER_LOSS_MINUTES"] = int(os.getenv("COOLDOWN_AFTER_LOSS_MINUTES", "60"))
 
     g["SL_ATR_MULTIPLIER"] = float(os.getenv("SL_ATR_MULTIPLIER", "1.5"))
     g["TP_ATR_MULTIPLIER"] = float(os.getenv("TP_ATR_MULTIPLIER", "2.5"))
@@ -254,8 +234,5 @@ def reload() -> None:
     g["RECHECK_MAX_MINUTES"] = int(os.getenv("RECHECK_MAX_MINUTES", "180"))
     g["RECHECK_EXPIRE_TIME"] = os.getenv("RECHECK_EXPIRE_TIME", "20:00")
 
-    g["TRADING_STYLE"] = os.getenv("TRADING_STYLE", "swing").lower()
-    _res = "HOUR" if g["TRADING_STYLE"] == "intraday" else "DAY"
-    _bars = 48 if g["TRADING_STYLE"] == "intraday" else 30
-    g["PRICE_HISTORY_RESOLUTION"] = os.getenv("PRICE_HISTORY_RESOLUTION", _res)
-    g["PRICE_HISTORY_MAX_BARS"] = int(os.getenv("PRICE_HISTORY_MAX_BARS", str(_bars)))
+    g["PRICE_HISTORY_RESOLUTION"] = os.getenv("PRICE_HISTORY_RESOLUTION", "DAY")
+    g["PRICE_HISTORY_MAX_BARS"] = int(os.getenv("PRICE_HISTORY_MAX_BARS", "30"))

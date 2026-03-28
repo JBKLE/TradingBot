@@ -299,7 +299,7 @@ def find_support_resistance(
 def calculate_all(bars: list[PriceBar]) -> dict:
     """
     Berechnet alle Indikatoren und gibt ein Summary-Dict zurück.
-    Dieses Dict wird direkt in den Claude-Prompt eingebaut.
+    Dieses Dict wird in der Analyse verwendet.
 
     Struktur:
     {

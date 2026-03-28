@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class TradingStrategy:
-    """Validates Claude's recommendation and decides whether to execute."""
+    """Validates DQN's recommendation and decides whether to execute."""
 
     def validate_signal(
         self,
@@ -257,11 +257,11 @@ class TradingStrategy:
                     stop_loss = opp.entry_price + (atr * config.SL_ATR_MULTIPLIER)
                     take_profit = opp.entry_price - (atr * config.TP_ATR_MULTIPLIER)
                 logger.info(
-                    "SL: Claude=%.4f → ATR-basiert=%.4f (ATR=%.4f × %.1f)",
+                    "SL: DQN=%.4f → ATR-basiert=%.4f (ATR=%.4f × %.1f)",
                     opp.stop_loss, stop_loss, atr, config.SL_ATR_MULTIPLIER,
                 )
                 logger.info(
-                    "TP: Claude=%.4f → ATR-basiert=%.4f (ATR=%.4f × %.1f)",
+                    "TP: DQN=%.4f → ATR-basiert=%.4f (ATR=%.4f × %.1f)",
                     opp.take_profit, take_profit, atr, config.TP_ATR_MULTIPLIER,
                 )
 
@@ -275,7 +275,7 @@ class TradingStrategy:
         # ── Finaler RR-Check: ATR-Override kann RR verschlechtern ────────
         if rr_ratio < config.MIN_RISK_REWARD_RATIO:
             logger.warning(
-                "RR nach ATR-Override zu niedrig: %.2f < %.2f – fallback auf Claude's SL/TP",
+                "RR nach ATR-Override zu niedrig: %.2f < %.2f – fallback auf DQN's SL/TP",
                 rr_ratio, config.MIN_RISK_REWARD_RATIO,
             )
             stop_loss = opp.stop_loss
@@ -289,7 +289,7 @@ class TradingStrategy:
 
             if rr_ratio < config.MIN_RISK_REWARD_RATIO:
                 logger.error(
-                    "Auch Claude's RR=%.2f unter Minimum %.2f – Trade abgelehnt",
+                    "Auch DQN's RR=%.2f unter Minimum %.2f – Trade abgelehnt",
                     rr_ratio, config.MIN_RISK_REWARD_RATIO,
                 )
                 return None

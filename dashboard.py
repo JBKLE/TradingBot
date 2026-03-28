@@ -333,7 +333,7 @@ with tab_trading:
 
     with col_b1:
         if st.button("ANALYSE STARTEN", use_container_width=True):
-            with st.spinner("Claude analysiert den Markt..."):
+            with st.spinner("DQN analysiert den Markt..."):
                 try:
                     resp = httpx.post(f"{BOT_API_URL}/api/analyze", timeout=120)
                     if resp.status_code == 200:
@@ -363,7 +363,7 @@ with tab_trading:
                             f"P/L: {result.get('total_pl', 0):+.2f} EUR | "
                             f"Balance: {result.get('balance', 0):.2f} EUR"
                         )
-                        cs = result.get("claude_summary", {})
+                        cs = result.get("ai_summary", {})
                         if cs.get("summary"):
                             st.info(cs["summary"])
                         for rec in cs.get("recommendations", []):
@@ -384,7 +384,7 @@ with tab_trading:
                             f"Woche: {result.get('trades_count', 0)} Trades | "
                             f"P/L: {result.get('total_pl', 0):+.2f} EUR"
                         )
-                        cs = result.get("claude_summary", {})
+                        cs = result.get("ai_summary", {})
                         if cs.get("summary"):
                             st.info(cs["summary"])
                         if cs.get("highlights"):
@@ -432,14 +432,13 @@ with tab_trading:
 
     _api_tests = [
         ("CAPITAL.COM", "test_capital", "/api/test/capital", 30),
-        ("CLAUDE API", "test_anthropic", "/api/test/anthropic", 30),
+        ("DQN MODELL", "test_dqn", "/api/test/dqn", 15),
         ("NTFY.SH", "test_ntfy", "/api/test/ntfy", 15),
-        ("NEWS API", "test_news", "/api/test/news", 15),
     ]
 
-    col_t1, col_t2, col_t3, col_t4 = st.columns(4)
+    col_t1, col_t2, col_t3 = st.columns(3)
     for _col, (_label, _key, _endpoint, _timeout) in zip(
-        [col_t1, col_t2, col_t3, col_t4], _api_tests
+        [col_t1, col_t2, col_t3], _api_tests
     ):
         with _col:
             # Show colored status from previous test
@@ -631,7 +630,7 @@ with tab_trading:
                 )
         with col_rev2:
             if review_options and st.button("ANALYSIEREN", use_container_width=True):
-                with st.spinner("Claude analysiert den Trade..."):
+                with st.spinner("Trade wird analysiert..."):
                     try:
                         resp = httpx.post(
                             f"{BOT_API_URL}/api/trade-review/{selected_id}", timeout=120,
@@ -682,7 +681,7 @@ with tab_trading:
     st.markdown("---")
 
     # ── Analyses ───────────────────────────────────────────────────────────────
-    st.markdown("### ◈ CLAUDE ANALYSEN")
+    st.markdown("### ◈ DQN ANALYSEN")
     if not analyses.empty:
         for _, row in analyses.head(5).iterrows():
             rec = row["recommendation"]

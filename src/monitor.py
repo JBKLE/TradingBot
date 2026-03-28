@@ -1,4 +1,4 @@
-"""Regelbasiertes Position-Monitoring – alle 5 Minuten, ohne Claude API."""
+"""Regelbasiertes Position-Monitoring – alle 5 Minuten."""
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -19,7 +19,7 @@ class ActionType(str, Enum):
     TRAIL_STOP = "TRAIL_STOP"
     BREAK_EVEN = "BREAK_EVEN"
     ALERT = "ALERT"
-    ESCALATE_TO_CLAUDE = "ESCALATE_TO_CLAUDE"
+    ESCALATE_TO_DQN = "ESCALATE_TO_DQN"
     CLOSE = "CLOSE"
 
 
@@ -93,7 +93,7 @@ _escalations: dict[str, int] = {}    # date → count
 class PositionMonitor:
     """
     Überwacht offene Positionen alle 5 Minuten.
-    Rein regelbasiert – kein Claude-Call nötig.
+    Rein regelbasiert mit DQN-Eskalation bei Bedarf.
     """
 
     def __init__(self, broker: CapitalComBroker) -> None:
@@ -229,11 +229,6 @@ class PositionMonitor:
     def _evaluate_trade(self, trade: Trade, snapshot: PriceSnapshot) -> list[MonitorAction]:
         current = snapshot.bid if trade.direction == Direction.BUY else snapshot.ask
 
-        # Intraday: zwangsweise schließen vor Overnight
-        intraday_close = self._check_intraday_close(trade, current)
-        if intraday_close:
-            return [intraday_close]  # keine weiteren Checks nötig
-
         results = [
             self._check_trailing_stop(trade, current, snapshot),
             self._check_position_age(trade, current),
@@ -242,21 +237,6 @@ class PositionMonitor:
             self._check_spread(trade, snapshot),
         ]
         return [a for a in results if a is not None]
-
-    def _check_intraday_close(self, trade: Trade, current: float) -> Optional[MonitorAction]:
-        if config.TRADING_STYLE != "intraday":
-            return None
-        now = datetime.now(tz=config.TZ).time()
-        close_h, close_m = map(int, config.INTRADAY_CLOSE_TIME.split(":"))
-        from datetime import time as dt_time
-        if now >= dt_time(close_h, close_m):
-            return MonitorAction(
-                action_type=ActionType.CLOSE,
-                trade=trade,
-                reason=f"Intraday-Close: Position vor Overnight schließen (>{config.INTRADAY_CLOSE_TIME})",
-                urgency="high",
-            )
-        return None
 
     # ── Regel 1 & 2: Trailing Stop / Break-Even ────────────────────────────────
 
@@ -347,14 +327,14 @@ class PositionMonitor:
 
         if age >= timedelta(hours=48):
             return MonitorAction(
-                action_type=ActionType.ESCALATE_TO_CLAUDE,
+                action_type=ActionType.ESCALATE_TO_DQN,
                 trade=trade,
                 reason=f"Position seit {hours:.0f}h offen – überfällig (Swap-Kosten!)",
                 urgency="high",
             )
         if age >= timedelta(hours=24) and profit_pct < 0.5:
             return MonitorAction(
-                action_type=ActionType.ESCALATE_TO_CLAUDE,
+                action_type=ActionType.ESCALATE_TO_DQN,
                 trade=trade,
                 reason=f"Position seit {hours:.0f}h offen mit nur {profit_pct:.2f}% Gewinn",
                 urgency="medium",
@@ -369,7 +349,7 @@ class PositionMonitor:
 
         if abs_change > 3.0:
             return MonitorAction(
-                action_type=ActionType.ESCALATE_TO_CLAUDE,
+                action_type=ActionType.ESCALATE_TO_DQN,
                 trade=trade,
                 reason=f"Extreme Volatilität: {trade.epic} {change_30m:+.2f}% in 30 Min",
                 urgency="high",
