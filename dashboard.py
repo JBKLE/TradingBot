@@ -184,6 +184,237 @@ def load_log_lines(n: int = 100) -> list[str]:
     return lines[-n:]
 
 
+# ── Backtest Helpers ─────────────────────────────────────────────────────────
+
+def _render_single_backtest(bt_trades: list[dict], bt_source: str, bt_with_pos: bool):
+    """Einzelnen Trade per Dropdown auswaehlen und backtesten."""
+    options = {
+        f"#{t['id']} {t['asset']} {t['direction']} "
+        f"{'%.4f' % t['entry_price']} | P/L: {'%.2f' % (t['pnl'] or 0)} "
+        f"({t['status']}) {(t.get('entry_timestamp') or '')[:16]}": t
+        for t in bt_trades
+    }
+    selected = st.selectbox("Trade auswaehlen", list(options.keys()), key="bt_trade_select")
+    sel_trade = options[selected]
+
+    if st.button("ANALYSIEREN", width="stretch", key="bt_run"):
+        with st.spinner("DQN analysiert Trade..."):
+            r = _run_single_backtest(sel_trade["id"], bt_source, bt_with_pos)
+            if r:
+                _display_single_result(r)
+
+
+def _render_batch_backtest(bt_trades: list[dict], bt_source: str, bt_with_pos: bool):
+    """Alle geladenen Trades backtesten mit Fortschritt und Abbruch."""
+    # Filter-Optionen
+    fc1, fc2, fc3 = st.columns(3)
+    with fc1:
+        filter_asset = st.selectbox(
+            "Asset filtern",
+            ["Alle"] + sorted(set(t["asset"] for t in bt_trades)),
+            key="bt_filter_asset",
+        )
+    with fc2:
+        filter_dir = st.selectbox("Richtung filtern", ["Alle", "BUY", "SELL"], key="bt_filter_dir")
+    with fc3:
+        st.markdown(f"**{len(bt_trades)} Trades geladen**")
+
+    # Filter anwenden
+    filtered = bt_trades
+    if filter_asset != "Alle":
+        filtered = [t for t in filtered if t["asset"] == filter_asset]
+    if filter_dir != "Alle":
+        filtered = [t for t in filtered if t["direction"] == filter_dir]
+
+    st.markdown(f"**{len(filtered)} Trades nach Filter**")
+
+    # Session-State fuer Batch
+    if "batch_results" not in st.session_state:
+        st.session_state.batch_results = []
+    if "batch_running" not in st.session_state:
+        st.session_state.batch_running = False
+
+    bc1, bc2, bc3 = st.columns(3)
+    with bc1:
+        start_batch = st.button("BATCH STARTEN", width="stretch", key="bt_batch_start")
+    with bc2:
+        stop_batch = st.button("ABBRECHEN", width="stretch", key="bt_batch_stop")
+    with bc3:
+        if st.session_state.batch_results:
+            csv = _results_to_csv(st.session_state.batch_results)
+            st.download_button(
+                "CSV DOWNLOAD",
+                csv,
+                file_name=f"backtest_{bt_source}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                mime="text/csv",
+                width="stretch",
+            )
+
+    if stop_batch:
+        st.session_state.batch_running = False
+
+    if start_batch and filtered:
+        st.session_state.batch_results = []
+        st.session_state.batch_running = True
+
+        progress_bar = st.progress(0, text="Starte Batch-Backtest...")
+        status_text = st.empty()
+        results_container = st.empty()
+
+        for i, trade in enumerate(filtered):
+            if not st.session_state.batch_running:
+                status_text.warning(f"Abgebrochen nach {i}/{len(filtered)} Trades")
+                break
+
+            pct = (i + 1) / len(filtered)
+            progress_bar.progress(pct, text=f"Trade {i+1}/{len(filtered)}: #{trade['id']} {trade['asset']} {trade['direction']}")
+
+            r = _run_single_backtest(trade["id"], bt_source, bt_with_pos)
+            if r and "error" not in r:
+                st.session_state.batch_results.append(r)
+
+            # Zwischenergebnis alle 10 Trades aktualisieren
+            if (i + 1) % 10 == 0 or i == len(filtered) - 1:
+                _display_batch_summary(results_container, st.session_state.batch_results, i + 1, len(filtered))
+
+        st.session_state.batch_running = False
+        progress_bar.progress(1.0, text="Fertig!")
+
+    # Vorherige Ergebnisse anzeigen (auch nach Abbruch)
+    if st.session_state.batch_results and not start_batch:
+        _display_batch_summary(st, st.session_state.batch_results, len(st.session_state.batch_results), len(filtered))
+
+
+def _run_single_backtest(trade_id: int, source: str, with_pos: bool) -> dict | None:
+    """Einzelnen Backtest via API ausfuehren."""
+    try:
+        resp = httpx.post(
+            f"{BOT_API_URL}/api/backtest/{trade_id}",
+            params={"source": source, "with_position": str(with_pos).lower()},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        return None
+    except Exception:
+        return None
+
+
+def _display_single_result(r: dict):
+    """Einzelnes Backtest-Ergebnis anzeigen."""
+    verdict = r.get("verdict", "?")
+    v_color = {"MATCH": "green", "BESSER": "blue", "MISS": "red"}.get(verdict, "gray")
+    st.markdown(f"### Ergebnis: :{v_color}[**{verdict}**]")
+
+    rc1, rc2 = st.columns(2)
+    with rc1:
+        st.markdown("**Echter Trade**")
+        st.markdown(
+            f"- Richtung: **{r['trade_direction']}**\n"
+            f"- Entry: {r['trade_entry_price']:.4f}\n"
+            f"- P/L: **{r['trade_pnl']:+.2f}** "
+            f"({'Gewinn' if r['trade_won'] else 'Verlust'})"
+        )
+    with rc2:
+        st.markdown("**DQN-Entscheidung**")
+        st.markdown(
+            f"- Aktion: **{r['dqn_action']}** "
+            f"(Confidence: {r['dqn_confidence']}/10)\n"
+            f"- SL: {r['dqn_sl'] or '-'}\n"
+            f"- TP: {r['dqn_tp'] or '-'}"
+        )
+    st.markdown(
+        f"**Q-Werte:** {r['dqn_q_values']} | "
+        f"Kerzen: {r['candle_count']}/500 | "
+        f"Position-Info: {'Ja' if r['with_position'] else 'Nein'}"
+    )
+
+
+def _display_batch_summary(container, results: list[dict], done: int, total: int):
+    """Batch-Zusammenfassung mit Statistiken und Tabelle anzeigen."""
+    with container.container():
+        n = len(results)
+        match = sum(1 for r in results if r["verdict"] == "MATCH")
+        besser = sum(1 for r in results if r["verdict"] == "BESSER")
+        miss = sum(1 for r in results if r["verdict"] == "MISS")
+        avg_conf = sum(r["dqn_confidence"] for r in results) / n if n else 0
+
+        # Statistik-Kacheln
+        sc1, sc2, sc3, sc4, sc5 = st.columns(5)
+        sc1.metric("Analysiert", f"{done}/{total}")
+        sc2.metric("MATCH", match, f"{match/n*100:.0f}%" if n else "")
+        sc3.metric("BESSER", besser, f"{besser/n*100:.0f}%" if n else "")
+        sc4.metric("MISS", miss, f"{miss/n*100:.0f}%" if n else "")
+        sc5.metric("Avg Confidence", f"{avg_conf:.1f}/10")
+
+        # Aufschluesselung nach Asset
+        assets = sorted(set(r["asset"] for r in results))
+        if len(assets) > 1:
+            asset_rows = []
+            for asset in assets:
+                ar = [r for r in results if r["asset"] == asset]
+                an = len(ar)
+                a_match = sum(1 for r in ar if r["verdict"] == "MATCH")
+                a_besser = sum(1 for r in ar if r["verdict"] == "BESSER")
+                a_miss = sum(1 for r in ar if r["verdict"] == "MISS")
+                asset_rows.append({
+                    "Asset": asset,
+                    "Trades": an,
+                    "MATCH": a_match,
+                    "BESSER": a_besser,
+                    "MISS": a_miss,
+                    "Match%": f"{a_match/an*100:.0f}%" if an else "-",
+                })
+            st.dataframe(pd.DataFrame(asset_rows), width="stretch", hide_index=True)
+
+        # Detail-Tabelle
+        with st.expander(f"Detail-Tabelle ({n} Trades)", expanded=False):
+            rows = []
+            for r in results:
+                rows.append({
+                    "Asset": r["asset"],
+                    "Trade": r["trade_direction"],
+                    "Entry": f"{r['trade_entry_price']:.4f}",
+                    "P/L": f"{r['trade_pnl']:+.4f}",
+                    "Gewinn": r["trade_won"],
+                    "DQN": r["dqn_action"],
+                    "Conf": r["dqn_confidence"],
+                    "Verdict": r["verdict"],
+                    "Kerzen": r["candle_count"],
+                })
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+
+def _results_to_csv(results: list[dict]) -> str:
+    """Batch-Ergebnisse als CSV-String."""
+    import io
+    rows = []
+    for r in results:
+        rows.append({
+            "asset": r["asset"],
+            "entry_timestamp": r["entry_timestamp"],
+            "trade_direction": r["trade_direction"],
+            "trade_entry_price": r["trade_entry_price"],
+            "trade_pnl": r["trade_pnl"],
+            "trade_won": r["trade_won"],
+            "dqn_action": r["dqn_action"],
+            "dqn_confidence": r["dqn_confidence"],
+            "dqn_softmax": r["dqn_softmax"],
+            "dqn_sl": r["dqn_sl"],
+            "dqn_tp": r["dqn_tp"],
+            "q_hold": r["dqn_q_values"].get("HOLD", 0),
+            "q_buy": r["dqn_q_values"].get("BUY", 0),
+            "q_sell": r["dqn_q_values"].get("SELL", 0),
+            "q_close": r["dqn_q_values"].get("CLOSE", 0),
+            "verdict": r["verdict"],
+            "candle_count": r["candle_count"],
+            "with_position": r["with_position"],
+        })
+    buf = io.StringIO()
+    pd.DataFrame(rows).to_csv(buf, index=False)
+    return buf.getvalue()
+
+
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.markdown("# ◈ DQN TRADING BOT")
 st.markdown(f"*{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
@@ -338,14 +569,16 @@ with tab_trading:
     # ── Backtest-Panel (aufklappbar) ─────────────────────────────────
     if st.session_state.get("show_backtest"):
         with st.container():
-            st.markdown("#### DQN Backtest – Trade analysieren")
-            bt_col1, bt_col2, bt_col3 = st.columns([2, 1, 1])
+            st.markdown("#### DQN Backtest")
+            bt_col1, bt_col2, bt_col3, bt_col4 = st.columns([2, 1, 1, 1])
             with bt_col1:
                 bt_source = st.selectbox("Quelle", ["sim", "real"], key="bt_source")
             with bt_col2:
                 bt_with_pos = st.checkbox("Mit Position-Info", key="bt_with_pos")
             with bt_col3:
-                bt_limit = st.number_input("Trades laden", value=30, min_value=5, max_value=200, key="bt_limit")
+                bt_limit = st.number_input("Trades laden", value=50, min_value=5, max_value=5000, key="bt_limit")
+            with bt_col4:
+                bt_mode = st.selectbox("Modus", ["Einzeln", "Batch (alle)"], key="bt_mode")
 
             # Trades laden
             try:
@@ -354,67 +587,16 @@ with tab_trading:
                     params={"source": bt_source, "limit": bt_limit},
                     timeout=10,
                 )
-                if resp.status_code == 200:
+                if resp.status_code != 200:
+                    st.error(f"Trades laden fehlgeschlagen: {resp.status_code}")
+                else:
                     bt_trades = resp.json().get("trades", [])
                     if not bt_trades:
                         st.warning("Keine abgeschlossenen Trades gefunden")
+                    elif bt_mode == "Einzeln":
+                        _render_single_backtest(bt_trades, bt_source, bt_with_pos)
                     else:
-                        options = {
-                            f"#{t['id']} {t['asset']} {t['direction']} "
-                            f"{'%.4f' % t['entry_price']} → P/L: {'%.2f' % (t['pnl'] or 0)} "
-                            f"({t['status']}) {(t.get('entry_timestamp') or '')[:16]}": t
-                            for t in bt_trades
-                        }
-                        selected = st.selectbox("Trade auswaehlen", list(options.keys()), key="bt_trade_select")
-                        sel_trade = options[selected]
-
-                        if st.button("ANALYSIEREN", width="stretch", key="bt_run"):
-                            with st.spinner("DQN analysiert Trade..."):
-                                try:
-                                    bt_resp = httpx.post(
-                                        f"{BOT_API_URL}/api/backtest/{sel_trade['id']}",
-                                        params={
-                                            "source": bt_source,
-                                            "with_position": str(bt_with_pos).lower(),
-                                        },
-                                        timeout=30,
-                                    )
-                                    if bt_resp.status_code == 200:
-                                        r = bt_resp.json()
-                                        verdict = r.get("verdict", "?")
-                                        v_color = {"MATCH": "green", "BESSER": "blue", "MISS": "red"}.get(verdict, "gray")
-
-                                        st.markdown(
-                                            f"### Ergebnis: :{v_color}[**{verdict}**]"
-                                        )
-                                        rc1, rc2 = st.columns(2)
-                                        with rc1:
-                                            st.markdown("**Echter Trade**")
-                                            st.markdown(
-                                                f"- Richtung: **{r['trade_direction']}**\n"
-                                                f"- Entry: {r['trade_entry_price']:.4f}\n"
-                                                f"- P/L: **{r['trade_pnl']:+.2f}** "
-                                                f"({'Gewinn' if r['trade_won'] else 'Verlust'})"
-                                            )
-                                        with rc2:
-                                            st.markdown("**DQN-Entscheidung**")
-                                            st.markdown(
-                                                f"- Aktion: **{r['dqn_action']}** "
-                                                f"(Confidence: {r['dqn_confidence']}/10)\n"
-                                                f"- SL: {r['dqn_sl'] or '-'}\n"
-                                                f"- TP: {r['dqn_tp'] or '-'}"
-                                            )
-                                        st.markdown(
-                                            f"**Q-Werte:** {r['dqn_q_values']} | "
-                                            f"Kerzen: {r['candle_count']}/500 | "
-                                            f"Position-Info: {'Ja' if r['with_position'] else 'Nein'}"
-                                        )
-                                    else:
-                                        st.error(f"Fehler: {bt_resp.status_code} – {bt_resp.text[:200]}")
-                                except Exception as e:
-                                    st.error(f"Backtest fehlgeschlagen: {e}")
-                else:
-                    st.error(f"Trades laden fehlgeschlagen: {resp.status_code}")
+                        _render_batch_backtest(bt_trades, bt_source, bt_with_pos)
             except Exception as e:
                 st.error(f"API nicht erreichbar: {e}")
 
