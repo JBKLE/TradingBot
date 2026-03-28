@@ -3,6 +3,7 @@ import glob
 import json
 import os
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1609,45 +1610,34 @@ with tab_history:
     else:
         sim_capital, sim_risk_pct, sim_leverage, sim_eur_usd = None, None, None, 1.08
 
-    # ── Poll progress from API ────────────────────────────────────────────
-    _sim_prog: dict = {}
-    try:
-        _resp = httpx.get(f"{BOT_API_URL}/api/timeline-sim/progress", timeout=3.0)
-        _sim_prog = _resp.json()
-    except Exception:
-        pass
-
-    _sim_is_running = _sim_prog.get("running", False)
-
-    # Sync session state with server state
-    if _sim_is_running:
-        st.session_state.sim_running = True
-    elif st.session_state.get("sim_running") and not _sim_is_running:
-        # Just finished
-        if _sim_prog.get("result") is not None:
-            st.session_state.sim_result = _sim_prog["result"]
+    # ── Session state init ────────────────────────────────────────────────
+    if "sim_running" not in st.session_state:
         st.session_state.sim_running = False
-
-    # Auto-refresh while running (every 2 seconds)
-    if _sim_is_running:
-        st_autorefresh(interval=3000, key="sim_autorefresh")
 
     col_simbtn1, col_simbtn2 = st.columns([1, 1])
     with col_simbtn1:
         sim_btn = st.button(
-            "Simulation laeuft..." if _sim_is_running else "Simulation starten",
+            "Simulation starten",
             key="timeline_sim_btn",
             type="primary",
-            disabled=_sim_is_running,
+            disabled=st.session_state.sim_running,
         )
     with col_simbtn2:
         cancel_btn = st.button(
             "Abbrechen",
             key="timeline_cancel_btn",
-            disabled=not _sim_is_running,
+            disabled=not st.session_state.sim_running,
         )
 
-    if sim_btn and not _sim_is_running:
+    if cancel_btn:
+        try:
+            httpx.post(f"{BOT_API_URL}/api/timeline-sim/cancel", timeout=5.0)
+        except Exception:
+            pass
+        st.session_state.sim_running = False
+        st.warning("Abbruch angefordert...")
+
+    if sim_btn and not st.session_state.sim_running:
         st.session_state.pop("sim_result", None)
         try:
             resp = httpx.post(
@@ -1667,47 +1657,56 @@ with tab_history:
             data = resp.json()
             if data.get("status") in ("started", "already_running"):
                 st.session_state.sim_running = True
-                st.rerun()
         except Exception as exc:
             st.error(f"API-Fehler: {exc}")
 
-    if cancel_btn and _sim_is_running:
-        try:
-            httpx.post(f"{BOT_API_URL}/api/timeline-sim/cancel", timeout=5.0)
-            st.warning("Abbruch angefordert...")
-        except Exception:
-            pass
-
-    # ── Live progress bar ─────────────────────────────────────────────────
-    if _sim_is_running:
-        p = _sim_prog.get("progress", {})
-        current = p.get("current_minute", 0)
-        total   = p.get("total_minutes", 1)
-        pct     = p.get("pct", 0)
-
+    # ── Live progress loop (kein Page-Reload, wie Batch-Backtest) ─────────
+    if st.session_state.sim_running:
         st.markdown("---")
         st.markdown("#### Simulation laeuft...")
-        st.progress(pct / 100.0, text=f"{pct:.1f}% abgeschlossen")
+        progress_bar  = st.progress(0.0, text="Startet...")
+        metrics_area  = st.empty()
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Minute",          f"{current:,} / {total:,}")
-        c2.metric("Fortschritt",      f"{pct:.1f}%")
-        c3.metric("Offene Trades",   p.get("open_trades", 0))
-        c4.metric("Geschlossene Trades", p.get("closed_trades", 0))
-
-        if sim_fin_enabled and sim_capital:
+        while st.session_state.sim_running:
             try:
-                _prog_resp = httpx.get(f"{BOT_API_URL}/api/timeline-sim/progress", timeout=2.0)
-                _live = _prog_resp.json()
-                _sim_obj_cap = _live.get("progress", {}).get("current_capital")
-                if _sim_obj_cap is not None:
-                    cap_delta = _sim_obj_cap - sim_capital
-                    st.metric("Aktuelles Kapital", f"€{_sim_obj_cap:,.2f}",
-                              f"{cap_delta:+.2f} EUR")
+                _resp = httpx.get(f"{BOT_API_URL}/api/timeline-sim/progress", timeout=3.0)
+                _prog = _resp.json()
             except Exception:
-                pass
-        if total > 0 and current > 0:
-            st.caption(f"Auto-Refresh alle 3s | Device: CPU")
+                _prog = {}
+
+            running = _prog.get("running", False)
+            p       = _prog.get("progress", {})
+            current = p.get("current_minute", 0)
+            total   = p.get("total_minutes", 1) or 1
+            pct     = p.get("pct", 0.0)
+
+            progress_bar.progress(
+                min(pct / 100.0, 1.0),
+                text=f"{pct:.1f}% | Minute {current:,} / {total:,}",
+            )
+
+            with metrics_area.container():
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Minute",              f"{current:,} / {total:,}")
+                c2.metric("Fortschritt",          f"{pct:.1f}%")
+                c3.metric("Offene Trades",        p.get("open_trades", 0))
+                c4.metric("Geschlossene Trades",  p.get("closed_trades", 0))
+                if sim_fin_enabled and sim_capital:
+                    cur_cap = p.get("current_capital")
+                    if cur_cap is not None:
+                        cap_delta = cur_cap - sim_capital
+                        st.metric("Aktuelles Kapital", f"€{cur_cap:,.2f}",
+                                  f"{cap_delta:+.2f} EUR")
+
+            if not running:
+                result = _prog.get("result")
+                if result:
+                    st.session_state.sim_result = result
+                st.session_state.sim_running = False
+                progress_bar.progress(1.0, text="Fertig!")
+                break
+
+            time.sleep(2)
 
     # ── Display simulation results ─────────────────────────────────────────
     sim_result = st.session_state.get("sim_result")
