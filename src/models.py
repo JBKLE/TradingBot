@@ -1,4 +1,4 @@
-"""Pydantic data models for the commodities trading bot."""
+"""Pydantic data models for the DQN trading bot."""
 from __future__ import annotations
 
 from datetime import datetime

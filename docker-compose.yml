@@ -3,7 +3,7 @@ version: "3.8"
 services:
   trading-bot:
     build: .
-    container_name: commodities-trader
+    container_name: trading-bot
     restart: unless-stopped
     env_file: .env
     ports:
@@ -14,7 +14,6 @@ services:
       - /etc/localtime:/etc/localtime:ro
     environment:
       - TZ=Europe/Berlin
-      - NEWS_API_KEY=${NEWS_API_KEY:-}
     logging:
       driver: "json-file"
       options:
@@ -23,7 +22,7 @@ services:
 
   dashboard:
     build: .
-    container_name: commodities-dashboard
+    container_name: trading-dashboard
     restart: unless-stopped
     env_file: .env
     command: >

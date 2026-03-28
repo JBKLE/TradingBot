@@ -1,1 +1,1 @@
-"""Commodities Trading Bot – Capital.com + DQN AI."""
+"""DQN Trading Bot – Capital.com + eigenes Dueling-DQN-Modell."""

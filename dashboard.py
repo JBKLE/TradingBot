@@ -1,4 +1,4 @@
-"""Streamlit Dashboard – Commodities Trading Bot."""
+"""Streamlit Dashboard – DQN Trading Bot."""
 import glob
 import json
 import os
@@ -185,7 +185,7 @@ def load_log_lines(n: int = 100) -> list[str]:
 
 
 # ── Header ─────────────────────────────────────────────────────────────────────
-st.markdown("# ◈ COMMODITIES TRADING BOT")
+st.markdown("# ◈ DQN TRADING BOT")
 st.markdown(f"*{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
 st.markdown("---")
 
@@ -271,7 +271,7 @@ with st.sidebar:
         st.markdown("---")
         if _changed:
             st.info(f"{len(_changed)} Aenderung(en) ausstehend")
-        if st.button("SPEICHERN", use_container_width=True, disabled=not _changed):
+        if st.button("SPEICHERN", width="stretch", disabled=not _changed):
             try:
                 _save_resp = httpx.post(
                     f"{BOT_API_URL}/api/settings",
@@ -332,7 +332,7 @@ with tab_trading:
     col_b1, col_b2, col_b3, col_b4 = st.columns(4)
 
     with col_b1:
-        if st.button("ANALYSE STARTEN", use_container_width=True):
+        if st.button("ANALYSE STARTEN", width="stretch"):
             with st.spinner("DQN analysiert den Markt..."):
                 try:
                     resp = httpx.post(f"{BOT_API_URL}/api/analyze", timeout=120)
@@ -352,7 +352,7 @@ with tab_trading:
                     st.error(f"API nicht erreichbar: {e}")
 
     with col_b2:
-        if st.button("TAGESBILANZ", use_container_width=True):
+        if st.button("TAGESBILANZ", width="stretch"):
             with st.spinner("Erstelle Tagesbilanz..."):
                 try:
                     resp = httpx.post(f"{BOT_API_URL}/api/daily-summary", timeout=120)
@@ -374,7 +374,7 @@ with tab_trading:
                     st.error(f"API nicht erreichbar: {e}")
 
     with col_b3:
-        if st.button("WOCHENREPORT", use_container_width=True):
+        if st.button("WOCHENREPORT", width="stretch"):
             with st.spinner("Erstelle Wochenreport..."):
                 try:
                     resp = httpx.post(f"{BOT_API_URL}/api/weekly-report", timeout=120)
@@ -399,7 +399,7 @@ with tab_trading:
                     st.error(f"API nicht erreichbar: {e}")
 
     with col_b4:
-        if st.button("BOT STATUS", use_container_width=True):
+        if st.button("BOT STATUS", width="stretch"):
             try:
                 resp = httpx.get(f"{BOT_API_URL}/api/status", timeout=10)
                 if resp.status_code == 200:
@@ -459,7 +459,7 @@ with tab_trading:
                         unsafe_allow_html=True,
                     )
 
-            if st.button(_label, use_container_width=True, key=_key):
+            if st.button(_label, width="stretch", key=_key):
                 with st.spinner(f"Teste {_label}..."):
                     try:
                         _resp = httpx.post(f"{BOT_API_URL}{_endpoint}", timeout=_timeout)
@@ -562,7 +562,7 @@ with tab_trading:
             "position_size", "confidence", "deal_id"
         ]]
         display_open.columns = ["ZEIT", "DAUER", "ASSET", "DIR", "ENTRY", "▼SL %", "▲TP %", "SL", "TP", "SIZE", "CONF", "DEAL ID"]
-        st.dataframe(display_open, use_container_width=True, hide_index=True)
+        st.dataframe(display_open, width="stretch", hide_index=True)
         st.caption("Aktueller Kurs nicht in DB verfügbar – ▼SL % / ▲TP % zeigen Abstand vom Entry.")
     else:
         st.markdown("*Keine offenen Positionen.*")
@@ -606,7 +606,7 @@ with tab_trading:
             lambda x: f"{x:+.2f}%" if pd.notna(x) else "–"
         )
         display.columns = ["ZEIT", "ASSET", "DIR", "ENTRY", "EXIT", "SL", "TP", "SIZE", "P/L €", "P/L %", "STATUS", "CONF"]
-        st.dataframe(display, use_container_width=True, hide_index=True)
+        st.dataframe(display, width="stretch", hide_index=True)
     else:
         st.info("Noch keine Trades in der Datenbank.")
 
@@ -629,7 +629,7 @@ with tab_trading:
                     format_func=lambda x: next(l for i, l in review_options if i == x),
                 )
         with col_rev2:
-            if review_options and st.button("ANALYSIEREN", use_container_width=True):
+            if review_options and st.button("ANALYSIEREN", width="stretch"):
                 with st.spinner("Trade wird analysiert..."):
                     try:
                         resp = httpx.post(
@@ -824,7 +824,7 @@ with tab_simulation:
                 variant_stats.columns = ["VARIANTE", "TOTAL", "WINS", "LOSSES", "AVG P/L", "AVG R", "WIN RATE %"]
                 variant_stats["AVG P/L"] = variant_stats["AVG P/L"].apply(lambda x: f"{x:+.6f}")
                 variant_stats["AVG R"] = variant_stats["AVG R"].apply(lambda x: f"{x:+.2f}")
-                st.dataframe(variant_stats, use_container_width=True, hide_index=True)
+                st.dataframe(variant_stats, width="stretch", hide_index=True)
 
             # ── Win/Loss per asset ─────────────────────────────────────────────
             st.markdown("### ◈ PERFORMANCE PRO ASSET")
@@ -841,7 +841,7 @@ with tab_simulation:
                 asset_stats.columns = ["ASSET", "TOTAL", "WINS", "LOSSES", "AVG P/L", "AVG R", "WIN RATE %"]
                 asset_stats["AVG P/L"] = asset_stats["AVG P/L"].apply(lambda x: f"{x:+.6f}")
                 asset_stats["AVG R"] = asset_stats["AVG R"].apply(lambda x: f"{x:+.2f}")
-                st.dataframe(asset_stats, use_container_width=True, hide_index=True)
+                st.dataframe(asset_stats, width="stretch", hide_index=True)
 
             # ── Win/Loss per direction ─────────────────────────────────────────
             st.markdown("### ◈ PERFORMANCE PRO RICHTUNG")
@@ -858,7 +858,7 @@ with tab_simulation:
                 dir_stats.columns = ["RICHTUNG", "TOTAL", "WINS", "LOSSES", "AVG P/L", "AVG R", "WIN RATE %"]
                 dir_stats["AVG P/L"] = dir_stats["AVG P/L"].apply(lambda x: f"{x:+.6f}")
                 dir_stats["AVG R"] = dir_stats["AVG R"].apply(lambda x: f"{x:+.2f}")
-                st.dataframe(dir_stats, use_container_width=True, hide_index=True)
+                st.dataframe(dir_stats, width="stretch", hide_index=True)
 
             st.markdown("---")
 
@@ -966,7 +966,7 @@ with tab_simulation:
 
                 st.dataframe(
                     display_sim.iloc[start_idx:end_idx],
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
                 st.caption(f"Seite {page} von {total_pages} ({page_size} Trades pro Seite)")
