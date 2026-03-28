@@ -108,7 +108,7 @@ async def get_all_existing_ranges(
 
 # ── Fetch logic ──────────────────────────────────────────────────────────────
 
-CHUNK_MINUTES = 1000  # max bars per API call
+CHUNK_MINUTES = 800  # Capital.com MINUTE resolution limit: ~880 bars max per request
 
 
 def _generate_chunks(
