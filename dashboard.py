@@ -1588,17 +1588,45 @@ with tab_history:
         key="sim_assets",
     )
 
-    col_simbtn1, col_simbtn2 = st.columns([1, 1])
-    with col_simbtn1:
-        sim_btn = st.button("Simulation starten", key="timeline_sim_btn", type="primary")
-    with col_simbtn2:
-        cancel_btn = st.button("Abbrechen", key="timeline_cancel_btn")
+    # ── Poll progress from API ────────────────────────────────────────────
+    _sim_prog: dict = {}
+    try:
+        _resp = httpx.get(f"{BOT_API_URL}/api/timeline-sim/progress", timeout=3.0)
+        _sim_prog = _resp.json()
+    except Exception:
+        pass
 
-    if "sim_running" not in st.session_state:
+    _sim_is_running = _sim_prog.get("running", False)
+
+    # Sync session state with server state
+    if _sim_is_running:
+        st.session_state.sim_running = True
+    elif st.session_state.get("sim_running") and not _sim_is_running:
+        # Just finished
+        if _sim_prog.get("result") is not None:
+            st.session_state.sim_result = _sim_prog["result"]
         st.session_state.sim_running = False
 
-    if sim_btn and not st.session_state.sim_running:
-        st.session_state.sim_running = True
+    # Auto-refresh while running (every 2 seconds)
+    if _sim_is_running:
+        st_autorefresh(interval=2000, key="sim_autorefresh")
+
+    col_simbtn1, col_simbtn2 = st.columns([1, 1])
+    with col_simbtn1:
+        sim_btn = st.button(
+            "Simulation laeuft..." if _sim_is_running else "Simulation starten",
+            key="timeline_sim_btn",
+            type="primary",
+            disabled=_sim_is_running,
+        )
+    with col_simbtn2:
+        cancel_btn = st.button(
+            "Abbrechen",
+            key="timeline_cancel_btn",
+            disabled=not _sim_is_running,
+        )
+
+    if sim_btn and not _sim_is_running:
         st.session_state.pop("sim_result", None)
         try:
             resp = httpx.post(
@@ -1612,61 +1640,61 @@ with tab_history:
                 timeout=10.0,
             )
             data = resp.json()
-            if data.get("status") == "started":
-                st.success("Simulation gestartet!")
-            elif data.get("status") == "already_running":
-                st.warning("Simulation laeuft bereits.")
+            if data.get("status") in ("started", "already_running"):
+                st.session_state.sim_running = True
+                st.rerun()
         except Exception as exc:
             st.error(f"API-Fehler: {exc}")
-            st.session_state.sim_running = False
 
-    if cancel_btn:
+    if cancel_btn and _sim_is_running:
         try:
             httpx.post(f"{BOT_API_URL}/api/timeline-sim/cancel", timeout=5.0)
             st.warning("Abbruch angefordert...")
         except Exception:
             pass
 
-    # Show simulation progress / result
-    if st.session_state.get("sim_running"):
-        try:
-            resp = httpx.get(f"{BOT_API_URL}/api/timeline-sim/progress", timeout=5.0)
-            prog = resp.json()
-            if prog.get("running"):
-                p = prog.get("progress", {})
-                pct = p.get("pct", 0)
-                st.progress(pct / 100.0)
-                st.info(
-                    f"Minute {p.get('current_minute', 0):,}/{p.get('total_minutes', '?'):,} "
-                    f"({pct}%) — {p.get('open_trades', 0)} offen, "
-                    f"{p.get('closed_trades', 0)} geschlossen"
-                )
-            elif prog.get("result") is not None:
-                st.session_state.sim_result = prog["result"]
-                st.session_state.sim_running = False
-        except Exception:
-            pass
+    # ── Live progress bar ─────────────────────────────────────────────────
+    if _sim_is_running:
+        p = _sim_prog.get("progress", {})
+        current = p.get("current_minute", 0)
+        total   = p.get("total_minutes", 1)
+        pct     = p.get("pct", 0)
 
-    # Display simulation results
+        st.markdown("---")
+        st.markdown("#### Simulation laeuft...")
+        st.progress(pct / 100.0, text=f"{pct:.1f}% abgeschlossen")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Minute",          f"{current:,} / {total:,}")
+        c2.metric("Fortschritt",      f"{pct:.1f}%")
+        c3.metric("Offene Trades",   p.get("open_trades", 0))
+        c4.metric("Geschlossene Trades", p.get("closed_trades", 0))
+
+        if total > 0 and current > 0:
+            st.caption(f"Verbleibend: ~{int((total - current) * 0.001):.0f} Sek (CPU) | Auto-Refresh alle 2s")
+
+    # ── Display simulation results ─────────────────────────────────────────
     sim_result = st.session_state.get("sim_result")
     if sim_result and "error" not in sim_result:
         st.markdown("---")
         st.markdown("#### Ergebnis")
 
         col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-        col_r1.metric("TRADES", sim_result.get("trades", 0))
+        col_r1.metric("TRADES",       sim_result.get("trades", 0))
         col_r2.metric(
             "WIN RATE",
             f"{sim_result.get('win_rate', 0):.1f}%",
             f"{sim_result.get('wins', 0)}W / {sim_result.get('losses', 0)}L",
         )
         col_r3.metric("P/L (Punkte)", f"{sim_result.get('total_pnl_points', 0):+.4f}")
-        col_r4.metric("Avg R-Multiple", f"{sim_result.get('avg_r_multiple', 0):+.3f}")
+        col_r4.metric("Avg R-Mult",   f"{sim_result.get('avg_r_multiple', 0):+.3f}")
 
         st.caption(
-            f"Zeitraum: {sim_result.get('start_ts', '')[:16]} bis {sim_result.get('end_ts', '')[:16]} "
-            f"({sim_result.get('total_minutes', 0):,} Minuten)"
+            f"Zeitraum: {sim_result.get('start_ts', '')[:16]} bis "
+            f"{sim_result.get('end_ts', '')[:16]} "
+            f"({sim_result.get('total_minutes', 0):,} Minuten simuliert)"
         )
+        st.info("Trades gespeichert in simLastCharts.db → nutzbar fuer TradeAI Training (`--db history`)")
 
         # Per-asset breakdown
         per_asset = sim_result.get("per_asset", {})
@@ -1675,40 +1703,34 @@ with tab_history:
             pa_cols = st.columns(len(per_asset))
             for i, (asset, stats) in enumerate(per_asset.items()):
                 with pa_cols[i]:
-                    wr = stats.get("win_rate", 0)
                     st.metric(
                         asset,
                         f"{stats.get('trades', 0)} Trades",
-                        f"WR: {wr:.0f}% | P/L: {stats.get('pnl', 0):+.4f}",
+                        f"WR: {stats.get('win_rate', 0):.0f}% | "
+                        f"P/L: {stats.get('pnl', 0):+.4f}",
                     )
 
-        # Trade list table
+        # P/L Equity-Kurve (kumulativ)
         trade_list = sim_result.get("trade_list", [])
         if trade_list:
-            st.markdown("##### Alle Trades")
             df_trades = pd.DataFrame(trade_list)
-            df_trades = df_trades.rename(columns={
-                "asset": "Asset",
-                "direction": "Dir",
-                "entry_ts": "Entry",
-                "exit_ts": "Exit",
-                "entry_price": "Entry Preis",
-                "exit_price": "Exit Preis",
-                "pnl": "P/L",
-                "r_multiple": "R-Mult",
-                "status": "Status",
-                "confidence": "Conf",
+            df_trades["cum_pnl"] = df_trades["pnl"].cumsum()
+
+            st.markdown("##### Equity-Kurve (kumulativer P/L in Punkten)")
+            st.line_chart(df_trades[["cum_pnl"]].rename(columns={"cum_pnl": "P/L kumulativ"}))
+
+            # Trade-Tabelle
+            st.markdown("##### Alle Trades")
+            display_df = df_trades.drop(columns=["cum_pnl"]).rename(columns={
+                "asset": "Asset", "direction": "Dir",
+                "entry_ts": "Entry", "exit_ts": "Exit",
+                "entry_price": "Entry Preis", "exit_price": "Exit Preis",
+                "pnl": "P/L", "r_multiple": "R-Mult",
+                "status": "Status", "confidence": "Conf",
             })
+            st.dataframe(display_df, width="stretch", hide_index=True)
 
-            # Color P/L
-            st.dataframe(
-                df_trades,
-                width="stretch",
-                hide_index=True,
-            )
-
-            # CSV download
-            csv_data = df_trades.to_csv(index=False).encode("utf-8-sig")
+            csv_data = display_df.to_csv(index=False).encode("utf-8-sig")
             st.download_button(
                 "CSV Download",
                 data=csv_data,

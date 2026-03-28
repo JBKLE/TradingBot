@@ -695,11 +695,24 @@ def create_api() -> FastAPI:
 
     @app.get("/api/timeline-sim/progress")
     async def timeline_sim_progress():
-        """Fortschritt der laufenden Zeitstrahl-Simulation."""
+        """Fortschritt der laufenden Zeitstrahl-Simulation (live vom Simulator)."""
+        sim: "TimelineSimulator | None" = _sim_task_state.get("simulator")
+        progress = dict(_sim_task_state["progress"])
+        # Merge live counters directly from simulator object (updated every iteration)
+        if sim and _sim_task_state["running"]:
+            total = sim.total_minutes or 1
+            current = sim.current_minute
+            progress = {
+                "current_minute": current,
+                "total_minutes":  total,
+                "open_trades":    sim.open_trade_count,
+                "closed_trades":  sim.closed_trade_count,
+                "pct":            round(current / total * 100, 1),
+            }
         return {
-            "running": _sim_task_state["running"],
-            "progress": _sim_task_state["progress"],
-            "result": _sim_task_state["result"],
+            "running":  _sim_task_state["running"],
+            "progress": progress,
+            "result":   _sim_task_state["result"],
         }
 
     @app.post("/api/timeline-sim/cancel")
