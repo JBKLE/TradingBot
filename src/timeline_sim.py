@@ -153,8 +153,6 @@ class TimelineSimulator:
         results = []
         for q in q_values:
             action = int(q.argmax())
-            softmax = float(np.exp(q - q.max()) / np.exp(q - q.max()).sum())
-            # Use the max softmax value
             probs = np.exp(q - q.max())
             probs = probs / probs.sum()
             softmax_conf = float(probs.max())
