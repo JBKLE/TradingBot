@@ -649,6 +649,11 @@ def create_api() -> FastAPI:
         end_date: str | None = None
         assets: list[str] | None = None
         confidence_threshold: int = 8
+        # Financial params (None = no financial tracking)
+        capital:  float | None = None
+        risk_pct: float | None = None
+        leverage: int   | None = None
+        eur_usd:  float = 1.08
 
     _sim_task_state: dict = {"running": False, "progress": {}, "result": None, "simulator": None}
 
@@ -660,7 +665,13 @@ def create_api() -> FastAPI:
 
         from .timeline_sim import TimelineSimulator
 
-        sim = TimelineSimulator(confidence_threshold=body.confidence_threshold)
+        sim = TimelineSimulator(
+            confidence_threshold=body.confidence_threshold,
+            capital=body.capital,
+            risk_pct=body.risk_pct,
+            leverage=body.leverage,
+            eur_usd=body.eur_usd,
+        )
         _sim_task_state["simulator"] = sim
 
         def on_progress(current, total, open_trades, closed_trades):
@@ -703,11 +714,12 @@ def create_api() -> FastAPI:
             total = sim.total_minutes or 1
             current = sim.current_minute
             progress = {
-                "current_minute": current,
-                "total_minutes":  total,
-                "open_trades":    sim.open_trade_count,
-                "closed_trades":  sim.closed_trade_count,
-                "pct":            round(current / total * 100, 1),
+                "current_minute":  current,
+                "total_minutes":   total,
+                "open_trades":     sim.open_trade_count,
+                "closed_trades":   sim.closed_trade_count,
+                "pct":             round(current / total * 100, 1),
+                "current_capital": sim.current_capital if sim.fin_enabled else None,
             }
         return {
             "running":  _sim_task_state["running"],

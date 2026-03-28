@@ -1588,6 +1588,27 @@ with tab_history:
         key="sim_assets",
     )
 
+    # ── Financial inputs ──────────────────────────────────────────────────
+    sim_fin_enabled = st.checkbox("Finanzrechnung aktivieren", key="sim_fin_enabled",
+                                  help="Rechnet mit echtem Kapital, Hebel und Spread-Kosten")
+    if sim_fin_enabled:
+        sf1, sf2, sf3, sf4 = st.columns(4)
+        with sf1:
+            sim_capital = st.number_input("Startkapital (EUR)", value=1000.0,
+                                          min_value=100.0, step=100.0, key="sim_fin_capital")
+        with sf2:
+            sim_risk_pct = st.number_input("Risiko pro Trade (%)", value=1.0,
+                                           min_value=0.1, max_value=10.0, step=0.1,
+                                           key="sim_fin_risk") / 100.0
+        with sf3:
+            sim_leverage = st.number_input("Hebel", value=20, min_value=1,
+                                           max_value=100, step=1, key="sim_fin_leverage")
+        with sf4:
+            sim_eur_usd = st.number_input("EUR/USD", value=1.08, min_value=0.80,
+                                          max_value=1.50, step=0.01, key="sim_fin_eurusd")
+    else:
+        sim_capital, sim_risk_pct, sim_leverage, sim_eur_usd = None, None, None, 1.08
+
     # ── Poll progress from API ────────────────────────────────────────────
     _sim_prog: dict = {}
     try:
@@ -1609,7 +1630,7 @@ with tab_history:
 
     # Auto-refresh while running (every 2 seconds)
     if _sim_is_running:
-        st_autorefresh(interval=2000, key="sim_autorefresh")
+        st_autorefresh(interval=3000, key="sim_autorefresh")
 
     col_simbtn1, col_simbtn2 = st.columns([1, 1])
     with col_simbtn1:
@@ -1636,6 +1657,10 @@ with tab_history:
                     "end_date": sim_end.isoformat() if sim_end else None,
                     "assets": sim_assets if sim_assets else None,
                     "confidence_threshold": sim_confidence,
+                    "capital":  sim_capital,
+                    "risk_pct": sim_risk_pct,
+                    "leverage": sim_leverage,
+                    "eur_usd":  sim_eur_usd,
                 },
                 timeout=10.0,
             )
@@ -1670,8 +1695,19 @@ with tab_history:
         c3.metric("Offene Trades",   p.get("open_trades", 0))
         c4.metric("Geschlossene Trades", p.get("closed_trades", 0))
 
+        if sim_fin_enabled and sim_capital:
+            try:
+                _prog_resp = httpx.get(f"{BOT_API_URL}/api/timeline-sim/progress", timeout=2.0)
+                _live = _prog_resp.json()
+                _sim_obj_cap = _live.get("progress", {}).get("current_capital")
+                if _sim_obj_cap is not None:
+                    cap_delta = _sim_obj_cap - sim_capital
+                    st.metric("Aktuelles Kapital", f"€{_sim_obj_cap:,.2f}",
+                              f"{cap_delta:+.2f} EUR")
+            except Exception:
+                pass
         if total > 0 and current > 0:
-            st.caption(f"Verbleibend: ~{int((total - current) * 0.001):.0f} Sek (CPU) | Auto-Refresh alle 2s")
+            st.caption(f"Auto-Refresh alle 3s | Device: CPU")
 
     # ── Display simulation results ─────────────────────────────────────────
     sim_result = st.session_state.get("sim_result")
@@ -1694,6 +1730,32 @@ with tab_history:
             f"{sim_result.get('end_ts', '')[:16]} "
             f"({sim_result.get('total_minutes', 0):,} Minuten simuliert)"
         )
+
+        # Financial summary
+        fin = sim_result.get("financial", {})
+        if fin:
+            st.markdown("##### Finanzrechnung")
+            fc1, fc2, fc3, fc4 = st.columns(4)
+            start_cap = fin.get("start_capital", 0)
+            end_cap   = fin.get("end_capital", 0)
+            ret_pct   = fin.get("total_return_pct", 0)
+            dd_pct    = fin.get("max_drawdown_pct", 0)
+            fc1.metric("Startkapital",  f"€{start_cap:,.2f}")
+            fc2.metric("Endkapital",    f"€{end_cap:,.2f}", f"{ret_pct:+.2f}%")
+            fc3.metric("Max Drawdown",  f"{dd_pct:.2f}%")
+            fc4.metric("Rendite",       f"{ret_pct:+.2f}%",
+                       "MARGIN CALL" if fin.get("margin_call") else "OK")
+            if fin.get("margin_call"):
+                st.error("MARGIN CALL — Simulation wurde vorzeitig beendet (Kapital aufgebraucht)")
+
+            # Equity curve in EUR
+            eq_curve = fin.get("equity_curve", [])
+            if len(eq_curve) > 1:
+                eq_df = pd.DataFrame({"Kapital (EUR)": eq_curve})
+                eq_df.index.name = "Trade #"
+                st.markdown("##### Equity-Kurve (EUR)")
+                st.line_chart(eq_df)
+
         st.info("Trades gespeichert in simLastCharts.db → nutzbar fuer TradeAI Training (`--db history`)")
 
         # Per-asset breakdown
@@ -1721,12 +1783,17 @@ with tab_history:
 
             # Trade-Tabelle
             st.markdown("##### Alle Trades")
-            display_df = df_trades.drop(columns=["cum_pnl"]).rename(columns={
+            drop_cols = ["cum_pnl"] + [c for c in ["lot_size", "margin_eur"] if c in df_trades.columns and not sim_fin_enabled]
+            display_df = df_trades.drop(columns=drop_cols, errors="ignore").rename(columns={
                 "asset": "Asset", "direction": "Dir",
                 "entry_ts": "Entry", "exit_ts": "Exit",
                 "entry_price": "Entry Preis", "exit_price": "Exit Preis",
-                "pnl": "P/L", "r_multiple": "R-Mult",
+                "pnl": "P/L (Pkt)", "r_multiple": "R-Mult",
                 "status": "Status", "confidence": "Conf",
+                "netto_pnl_eur": "Netto P/L (€)",
+                "capital_after": "Kapital nach (€)",
+                "lot_size": "Lot",
+                "margin_eur": "Margin (€)",
             })
             st.dataframe(display_df, width="stretch", hide_index=True)
 
