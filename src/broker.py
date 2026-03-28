@@ -294,6 +294,14 @@ class CapitalComBroker:
                     logger.warning("Rate limited – waiting %.1fs", delay)
                     await asyncio.sleep(delay)
                     continue
+                if response.status_code == 404:
+                    # Data not found – no point retrying
+                    raise CapitalComError(f"404 Not Found: {response.text[:100]}")
+                if response.status_code == 400:
+                    body = response.text[:200]
+                    if "daterange" in body or "max.date" in body:
+                        # Date range too large or out of bounds – no point retrying
+                        raise CapitalComError(f"400 Date range error: {body}")
                 response.raise_for_status()
                 return response
             except httpx.HTTPStatusError as exc:

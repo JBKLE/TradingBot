@@ -194,6 +194,19 @@ async def fetch_asset_history(
                 to_date=to_iso,
             )
         except CapitalComError as exc:
+            exc_str = str(exc)
+            if "404" in exc_str or "not-found" in exc_str or "Not Found" in exc_str:
+                # Data not available for this period (demo API history limit)
+                logger.debug("No data for %s chunk %d (%s–%s) – skipping", asset_key, idx, from_iso, to_iso)
+                if progress_callback:
+                    progress_callback(asset_key, idx + 1, total_chunks, 0)
+                continue
+            if "daterange" in exc_str or "400 Date range" in exc_str:
+                # Date range rejected – skip this chunk
+                logger.debug("Date range rejected for %s chunk %d – skipping", asset_key, idx)
+                if progress_callback:
+                    progress_callback(asset_key, idx + 1, total_chunks, 0)
+                continue
             logger.warning("Fetch failed for %s chunk %d: %s", asset_key, idx, exc)
             error_count += 1
             await asyncio.sleep(1)
