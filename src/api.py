@@ -947,4 +947,47 @@ def create_api() -> FastAPI:
             pass
         return {"databases": dbs, "default": default_name, "data_dir": data_dir}
 
+    # ── Training Data Endpoints ──────────────────────────────────────────
+
+    @app.get("/api/training-data/databases")
+    async def training_data_databases():
+        """Alle DBs mit sim_trades-Tabelle auflisten."""
+        from .training_data import list_trade_databases
+        return {"databases": list_trade_databases()}
+
+    class TrainingFilterRequest(BaseModel):
+        source_dbs: list[str]
+        filters: dict = {}
+
+    @app.post("/api/training-data/filter-options")
+    async def training_filter_options(body: TrainingFilterRequest):
+        """Distinct-Werte für Filter-Dropdowns laden."""
+        from .training_data import get_filter_options
+        return get_filter_options(body.source_dbs)
+
+    @app.post("/api/training-data/preview")
+    async def training_data_preview(body: TrainingFilterRequest):
+        """Vorschau: Statistik der gefilterten Trades."""
+        from .training_data import preview_filtered
+        return preview_filtered(body.source_dbs, body.filters)
+
+    class TrainingExportRequest(BaseModel):
+        source_dbs: list[str]
+        filters: dict = {}
+        target_db: str = "training.db"
+        mode: str = "append"  # "append" oder "replace"
+
+    @app.post("/api/training-data/export")
+    async def training_data_export(body: TrainingExportRequest):
+        """Gefilterte Trades in Training-DB exportieren."""
+        from .training_data import export_to_training_db
+        if body.mode not in ("append", "replace"):
+            raise HTTPException(400, "mode muss 'append' oder 'replace' sein")
+        return export_to_training_db(
+            source_dbs=body.source_dbs,
+            filters=body.filters,
+            target_db=body.target_db,
+            mode=body.mode,
+        )
+
     return app

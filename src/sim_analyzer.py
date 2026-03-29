@@ -151,9 +151,14 @@ async def stream_analysis(current: dict, history_runs: list[dict]) -> AsyncItera
         yield "**Fehler:** `anthropic`-Paket nicht installiert. Bitte `pip install anthropic` ausführen."
         return
 
-    from dotenv import load_dotenv
-    load_dotenv()
+    # Zuerst OS-Env prüfen (gesetzt via docker env_file)
+    # Fallback: dotenv direkt laden (lokal oder gemounteter /app/.env in Docker)
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        from dotenv import load_dotenv
+        load_dotenv("/app/.env", override=False)   # Docker-Mount-Pfad
+        load_dotenv(override=False)                # lokaler Fallback
+        api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
         yield "**Fehler:** `ANTHROPIC_API_KEY` nicht gesetzt. Bitte in `.env` eintragen."
         return

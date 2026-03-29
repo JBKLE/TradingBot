@@ -687,7 +687,7 @@ if refresh > 0:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB NAVIGATION
 # ══════════════════════════════════════════════════════════════════════════════
-tab_trading, tab_simulation, tab_history = st.tabs(["◈ TRADING", "◈ SIMULATION", "◈ HISTORISCHE DATEN"])
+tab_trading, tab_simulation, tab_history, tab_training = st.tabs(["◈ TRADING", "◈ SIMULATION", "◈ HISTORISCHE DATEN", "◈ TRAININGSDATEN"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2161,3 +2161,237 @@ with tab_history:
                                 st.rerun()
                         except Exception as _e:
                             st.error(f"API-Fehler: {_e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 4: TRAININGSDATEN
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_training:
+    st.header("Trainingsdaten-Manager")
+    st.caption("Filtere simulierte Trades und exportiere gute Daten in eine Training-DB.")
+
+    # ── 1. Quell-Datenbanken laden ────────────────────────────────────────────
+    try:
+        _td_resp = httpx.get(f"{BOT_API_URL}/api/training-data/databases", timeout=10.0)
+        _td_dbs = _td_resp.json().get("databases", [])
+    except Exception:
+        _td_dbs = []
+
+    if not _td_dbs:
+        st.info("Keine Datenbanken mit sim_trades-Tabelle gefunden.")
+    else:
+        # Nur DBs mit sim_trades anzeigen
+        _td_with_sim = [d for d in _td_dbs if d.get("has_sim_trades")]
+        if not _td_with_sim:
+            st.info("Keine Datenbanken mit sim_trades-Tabelle gefunden.")
+        else:
+            # ── Quell-DB Auswahl ──────────────────────────────────────────
+            st.subheader("1. Quell-Datenbanken")
+            _td_options = [
+                f"{d['name']}  ({d['trade_count']} Trades, {d['size_kb']} KB)"
+                for d in _td_with_sim
+            ]
+            _td_selected_labels = st.multiselect(
+                "Datenbanken mit sim_trades auswählen:",
+                options=_td_options,
+                default=_td_options[:1],
+                key="td_source_dbs",
+            )
+            # Map labels back to filenames
+            _td_selected_dbs = [
+                _td_with_sim[i]["name"]
+                for i, lbl in enumerate(_td_options)
+                if lbl in _td_selected_labels
+            ]
+
+            if _td_selected_dbs:
+                # ── Filter-Optionen laden ─────────────────────────────────
+                try:
+                    _fo_resp = httpx.post(
+                        f"{BOT_API_URL}/api/training-data/filter-options",
+                        json={"source_dbs": _td_selected_dbs},
+                        timeout=10.0,
+                    )
+                    _fo = _fo_resp.json()
+                except Exception:
+                    _fo = {}
+
+                # ── 2. Filter-Panel ───────────────────────────────────────
+                st.subheader("2. Filter")
+                _fc1, _fc2, _fc3 = st.columns(3)
+                with _fc1:
+                    _f_assets = st.multiselect(
+                        "Assets", options=_fo.get("assets", []),
+                        default=_fo.get("assets", []), key="td_assets",
+                    )
+                    _f_directions = st.multiselect(
+                        "Richtung", options=_fo.get("directions", []),
+                        default=_fo.get("directions", []), key="td_directions",
+                    )
+                with _fc2:
+                    _f_statuses = st.multiselect(
+                        "Status", options=_fo.get("statuses", []),
+                        default=_fo.get("statuses", []), key="td_statuses",
+                    )
+                    _f_sl_variants = st.multiselect(
+                        "SL-Variante", options=_fo.get("sl_variants", []),
+                        default=_fo.get("sl_variants", []), key="td_sl_variants",
+                    )
+                with _fc3:
+                    _f_date_from = st.date_input(
+                        "Von", value=None, key="td_date_from",
+                    )
+                    _f_date_to = st.date_input(
+                        "Bis", value=None, key="td_date_to",
+                    )
+
+                # Erweiterte Filter
+                with st.expander("Erweiterte Filter"):
+                    _ef1, _ef2 = st.columns(2)
+                    with _ef1:
+                        _f_r_min = st.number_input(
+                            "R-Multiple min", value=None, step=0.1,
+                            key="td_r_min", format="%.2f",
+                        )
+                        _f_r_max = st.number_input(
+                            "R-Multiple max", value=None, step=0.1,
+                            key="td_r_max", format="%.2f",
+                        )
+                    with _ef2:
+                        _f_pnl_min = st.number_input(
+                            "P/L min (Punkte)", value=None, step=0.001,
+                            key="td_pnl_min", format="%.4f",
+                        )
+
+                # Filter-Dict bauen
+                _td_filters: dict = {}
+                if _f_assets and len(_f_assets) < len(_fo.get("assets", [])):
+                    _td_filters["assets"] = _f_assets
+                if _f_directions and len(_f_directions) < len(_fo.get("directions", [])):
+                    _td_filters["directions"] = _f_directions
+                if _f_statuses and len(_f_statuses) < len(_fo.get("statuses", [])):
+                    _td_filters["statuses"] = _f_statuses
+                if _f_sl_variants and len(_f_sl_variants) < len(_fo.get("sl_variants", [])):
+                    _td_filters["sl_variants"] = _f_sl_variants
+                if _f_date_from:
+                    _td_filters["date_from"] = str(_f_date_from)
+                if _f_date_to:
+                    _td_filters["date_to"] = str(_f_date_to)
+                if _f_r_min is not None:
+                    _td_filters["r_multiple_min"] = _f_r_min
+                if _f_r_max is not None:
+                    _td_filters["r_multiple_max"] = _f_r_max
+                if _f_pnl_min is not None:
+                    _td_filters["pnl_min"] = _f_pnl_min
+
+                # ── 3. Vorschau ───────────────────────────────────────────
+                st.subheader("3. Vorschau")
+                if st.button("Vorschau aktualisieren", key="td_preview_btn"):
+                    with st.spinner("Lade Vorschau..."):
+                        try:
+                            _pv_resp = httpx.post(
+                                f"{BOT_API_URL}/api/training-data/preview",
+                                json={"source_dbs": _td_selected_dbs, "filters": _td_filters},
+                                timeout=30.0,
+                            )
+                            st.session_state["td_preview"] = _pv_resp.json()
+                        except Exception as _e:
+                            st.error(f"Vorschau-Fehler: {_e}")
+
+                _pv = st.session_state.get("td_preview")
+                if _pv:
+                    _pk1, _pk2, _pk3, _pk4, _pk5 = st.columns(5)
+                    _pk1.metric("Trades", _pv.get("total", 0))
+                    _pk2.metric("Wins", _pv.get("wins", 0))
+                    _pk3.metric("Losses", _pv.get("losses", 0))
+                    _pk4.metric("Win-Rate", f"{_pv.get('win_rate', 0):.1f}%")
+                    _pk5.metric("Gesamt P/L", f"{_pv.get('total_pnl', 0):+.4f}")
+
+                    # Per-Asset Tabelle
+                    _pa = _pv.get("per_asset", {})
+                    if _pa:
+                        st.markdown("**Pro Asset:**")
+                        _pa_rows = []
+                        for _asset, _stats in sorted(_pa.items()):
+                            _pa_rows.append({
+                                "Asset": _asset,
+                                "Trades": _stats.get("trades", 0),
+                                "Wins": _stats.get("wins", 0),
+                                "Losses": _stats.get("losses", 0),
+                                "Win-Rate": f"{_stats.get('win_rate', 0):.1f}%",
+                                "P/L": f"{_stats.get('pnl', 0):+.4f}",
+                            })
+                        st.dataframe(pd.DataFrame(_pa_rows), hide_index=True, use_container_width=True)
+
+                    # Per-Direction
+                    _pd_dir = _pv.get("per_direction", {})
+                    if _pd_dir:
+                        _dc1, _dc2 = st.columns(2)
+                        _dc1.metric("BUY-Trades", _pd_dir.get("BUY", 0))
+                        _dc2.metric("SELL-Trades", _pd_dir.get("SELL", 0))
+
+                # ── 4. Export ─────────────────────────────────────────────
+                st.subheader("4. Export in Training-DB")
+
+                _ex1, _ex2 = st.columns(2)
+                with _ex1:
+                    # Ziel-DB auswählen oder neue anlegen
+                    _existing_training = [
+                        d["name"] for d in _td_dbs if d.get("has_training_trades")
+                    ]
+                    _target_options = _existing_training + ["── Neue Datenbank anlegen ──"]
+                    _target_choice = st.selectbox(
+                        "Ziel-Datenbank:",
+                        options=_target_options,
+                        index=0 if _existing_training else len(_target_options) - 1,
+                        key="td_target_db",
+                    )
+                    if _target_choice == "── Neue Datenbank anlegen ──":
+                        _target_db_name = st.text_input(
+                            "Neuer DB-Name:", value="training.db", key="td_new_db",
+                        )
+                    else:
+                        _target_db_name = _target_choice
+
+                with _ex2:
+                    _export_mode = st.radio(
+                        "Modus:", ["append", "replace"],
+                        format_func=lambda x: "Anhängen" if x == "append" else "Ersetzen (löscht vorhandene)",
+                        key="td_export_mode",
+                    )
+
+                _total_preview = (_pv or {}).get("total", 0)
+                if _total_preview > 0:
+                    st.info(f"**{_total_preview}** Trades werden exportiert nach **{_target_db_name}** (Modus: {_export_mode})")
+
+                if st.button(
+                    f"Export starten ({_total_preview} Trades)",
+                    key="td_export_btn",
+                    disabled=_total_preview == 0,
+                    type="primary",
+                ):
+                    with st.spinner("Exportiere..."):
+                        try:
+                            _ex_resp = httpx.post(
+                                f"{BOT_API_URL}/api/training-data/export",
+                                json={
+                                    "source_dbs": _td_selected_dbs,
+                                    "filters": _td_filters,
+                                    "target_db": _target_db_name,
+                                    "mode": _export_mode,
+                                },
+                                timeout=60.0,
+                            )
+                            _ex_result = _ex_resp.json()
+                            st.success(
+                                f"Erfolgreich! **{_ex_result.get('exported', 0)}** Trades "
+                                f"exportiert nach **{_ex_result.get('target_db', '?')}** "
+                                f"(gesamt in DB: {_ex_result.get('total_in_target', 0)})"
+                            )
+                            # Per-Source Aufschlüsselung
+                            _ps = _ex_result.get("per_source", {})
+                            if _ps:
+                                for _src, _cnt in _ps.items():
+                                    st.caption(f"  {_src}: {_cnt} Trades")
+                        except Exception as _e:
+                            st.error(f"Export-Fehler: {_e}")
