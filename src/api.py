@@ -714,12 +714,15 @@ def create_api() -> FastAPI:
             total = sim.total_minutes or 1
             current = sim.current_minute
             progress = {
-                "current_minute":  current,
-                "total_minutes":   total,
-                "open_trades":     sim.open_trade_count,
-                "closed_trades":   sim.closed_trade_count,
-                "pct":             round(current / total * 100, 1),
-                "current_capital": sim.current_capital if sim.fin_enabled else None,
+                "current_minute":    current,
+                "total_minutes":     total,
+                "open_trades":       sim.open_trade_count,
+                "closed_trades":     sim.closed_trade_count,
+                "pct":               round(current / total * 100, 1),
+                "current_capital":   sim.current_capital if sim.fin_enabled else None,
+                "equity_snap":       sim.equity_snap[-300:],
+                "open_trades_snap":  sim.open_trades_snap,
+                "closed_trades_snap": sim.closed_trades_snap[-50:],
             }
         return {
             "running":  _sim_task_state["running"],

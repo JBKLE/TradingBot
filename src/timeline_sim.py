@@ -72,6 +72,10 @@ class TimelineSimulator:
         self.open_trade_count: int = 0
         self.closed_trade_count: int = 0
         self.current_capital: float = capital or 0.0
+        # Live snapshots for dashboard (updated every PROGRESS_EVERY minutes)
+        self.equity_snap:        list = []   # sampled equity curve values
+        self.open_trades_snap:   list = []   # current open trades
+        self.closed_trades_snap: list = []   # last ~100 closed trades
 
     @staticmethod
     def _resolve_device() -> torch.device:
@@ -260,6 +264,19 @@ class TimelineSimulator:
                 self.closed_trade_count = len(closed_trades)
                 if progress_callback:
                     progress_callback(minute_idx + 1, total, len(open_trades), len(closed_trades))
+                # Live snapshots – copied here (GIL-safe list replacement)
+                if fin_enabled and equity_curve:
+                    eq = equity_curve
+                    step = max(1, len(eq) // 300)
+                    self.equity_snap = eq[::step]
+                self.open_trades_snap = [
+                    {k: v for k, v in t.items() if k != "financial"}
+                    for t in open_trades.values()
+                ]
+                self.closed_trades_snap = [
+                    {k: v for k, v in t.items() if k != "financial"}
+                    for t in closed_trades[-100:]
+                ]
 
             if pending_save and minute_idx % FLUSH_EVERY == 0:
                 self._save_trades_sync(pending_save)

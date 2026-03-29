@@ -1664,8 +1664,11 @@ with tab_history:
     if st.session_state.sim_running:
         st.markdown("---")
         st.markdown("#### Simulation laeuft...")
-        progress_bar  = st.progress(0.0, text="Startet...")
-        metrics_area  = st.empty()
+        progress_bar        = st.progress(0.0, text="Startet...")
+        metrics_area        = st.empty()
+        equity_live_area    = st.empty()
+        open_trades_area    = st.empty()
+        closed_trades_area  = st.empty()
 
         while st.session_state.sim_running:
             try:
@@ -1697,6 +1700,68 @@ with tab_history:
                         cap_delta = cur_cap - sim_capital
                         st.metric("Aktuelles Kapital", f"€{cur_cap:,.2f}",
                                   f"{cap_delta:+.2f} EUR")
+
+            # ── Live Equity-Kurve ──────────────────────────────────────────
+            eq_snap = p.get("equity_snap", [])
+            if sim_fin_enabled and len(eq_snap) > 1:
+                with equity_live_area.container():
+                    st.markdown("##### Equity-Kurve (live)")
+                    eq_df = pd.DataFrame({"Kapital (EUR)": eq_snap})
+                    eq_df.index.name = "Trade #"
+                    st.line_chart(eq_df)
+
+            # ── Offene Trades ──────────────────────────────────────────────
+            open_snap = p.get("open_trades_snap", [])
+            with open_trades_area.container():
+                st.markdown(f"##### Offene Trades ({len(open_snap)})")
+                if open_snap:
+                    open_df = pd.DataFrame([{
+                        "Asset":       t.get("asset", ""),
+                        "Dir":         t.get("direction", ""),
+                        "Conf":        t.get("confidence", 0),
+                        "Entry":       str(t.get("entry_timestamp", ""))[:16],
+                        "Entry Preis": t.get("entry_price", 0),
+                        "SL":          round(t.get("sl_price", 0), 5),
+                        "TP":          round(t.get("tp_price", 0), 5),
+                    } for t in open_snap])
+                    st.dataframe(open_df, hide_index=True, use_container_width=True)
+                else:
+                    st.caption("Keine offenen Trades")
+
+            # ── Letzte abgeschlossene Trades ───────────────────────────────
+            closed_snap = p.get("closed_trades_snap", [])
+            with closed_trades_area.container():
+                st.markdown(f"##### Abgeschlossene Trades ({p.get('closed_trades', 0)})")
+                if closed_snap:
+                    closed_rows = []
+                    for t in reversed(closed_snap):  # neueste zuerst
+                        row = {
+                            "Asset":       t.get("asset", ""),
+                            "Dir":         t.get("direction", ""),
+                            "Conf":        t.get("confidence", 0),
+                            "Status":      t.get("status", ""),
+                            "Entry":       str(t.get("entry_timestamp", ""))[:16],
+                            "Exit":        str(t.get("exit_timestamp", ""))[:16],
+                            "P/L (Pkt)":  round(t.get("pnl") or 0, 4),
+                            "R-Mult":     round(t.get("r_multiple") or 0, 3),
+                        }
+                        if t.get("capital_after") is not None:
+                            row["Kapital (€)"] = round(t["capital_after"], 2)
+                        closed_rows.append(row)
+                    closed_df = pd.DataFrame(closed_rows)
+                    # Conf-Spalte farblich hervorheben via Styling
+                    def _style_status(val):
+                        if val == "closed_tp":
+                            return "color: #39ff14"
+                        if val == "closed_sl":
+                            return "color: #ff4444"
+                        return ""
+                    styled = closed_df.style.applymap(
+                        _style_status, subset=["Status"]
+                    )
+                    st.dataframe(styled, hide_index=True, use_container_width=True)
+                else:
+                    st.caption("Noch keine abgeschlossenen Trades")
 
             if not running:
                 result = _prog.get("result")
