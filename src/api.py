@@ -990,4 +990,148 @@ def create_api() -> FastAPI:
             mode=body.mode,
         )
 
+    # ── DB-Viewer Endpoints ──────────────────────────────────────────────
+
+    @app.get("/api/db-viewer/databases")
+    async def db_viewer_databases():
+        """Alle .db-Dateien im DATA_DIR mit Tabellen-Übersicht."""
+        import sqlite3 as _sq
+        data_dir = config.DATA_DIR
+        result = []
+        try:
+            for fname in sorted(os.listdir(data_dir)):
+                if not fname.endswith(".db"):
+                    continue
+                fpath = os.path.join(data_dir, fname)
+                try:
+                    conn = _sq.connect(fpath, timeout=3)
+                    tables = {}
+                    for (tname,) in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                    ).fetchall():
+                        try:
+                            cnt = conn.execute(f"SELECT COUNT(*) FROM \"{tname}\"").fetchone()[0]
+                        except Exception:
+                            cnt = -1
+                        tables[tname] = cnt
+                    conn.close()
+                    result.append({
+                        "name": fname,
+                        "size_kb": round(os.path.getsize(fpath) / 1024, 1),
+                        "tables": tables,
+                    })
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return {"databases": result}
+
+    @app.get("/api/db-viewer/{db_name}/table/{table_name}")
+    async def db_viewer_table(
+        db_name: str,
+        table_name: str,
+        limit: int = 500,
+        offset: int = 0,
+        asset: str | None = None,
+    ):
+        """Tabelleninhalt mit optionalem Asset-Filter und Paginierung."""
+        import sqlite3 as _sq
+        db_name = os.path.basename(db_name)
+        fpath   = os.path.join(config.DATA_DIR, db_name)
+        if not os.path.exists(fpath):
+            raise HTTPException(404, f"DB '{db_name}' nicht gefunden")
+
+        try:
+            conn    = _sq.connect(fpath, timeout=5)
+            # Schema
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info(\"{table_name}\")").fetchall()]
+            if not cols:
+                raise HTTPException(404, f"Tabelle '{table_name}' nicht gefunden")
+
+            # Zeilen mit optionalem Filter
+            where  = "WHERE asset = ?" if (asset and "asset" in cols) else ""
+            params = [asset] if (asset and "asset" in cols) else []
+
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM \"{table_name}\" {where}", params
+            ).fetchone()[0]
+
+            rows = conn.execute(
+                f"SELECT * FROM \"{table_name}\" {where} ORDER BY rowid DESC LIMIT ? OFFSET ?",
+                params + [limit, offset],
+            ).fetchall()
+            conn.close()
+
+            return {
+                "columns": cols,
+                "rows":    [list(r) for r in rows],
+                "total":   total,
+                "limit":   limit,
+                "offset":  offset,
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+
+    @app.get("/api/db-viewer/{db_name}/summary/{table_name}")
+    async def db_viewer_summary(db_name: str, table_name: str):
+        """Spezielle Zusammenfassung für bekannte Tabellen (price_history, sim_trades, training_trades)."""
+        import sqlite3 as _sq
+        db_name = os.path.basename(db_name)
+        fpath   = os.path.join(config.DATA_DIR, db_name)
+        if not os.path.exists(fpath):
+            raise HTTPException(404, f"DB '{db_name}' nicht gefunden")
+
+        try:
+            conn = _sq.connect(fpath, timeout=5)
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info(\"{table_name}\")").fetchall()]
+
+            summary: dict = {"table": table_name, "columns": cols}
+
+            if table_name == "price_history" and "asset" in cols:
+                rows = conn.execute(
+                    """SELECT asset, COUNT(*),
+                       MIN(timestamp), MAX(timestamp)
+                       FROM price_history GROUP BY asset ORDER BY asset"""
+                ).fetchall()
+                summary["per_asset"] = [
+                    {"asset": r[0], "count": r[1], "from": r[2][:16], "to": r[3][:16]}
+                    for r in rows
+                ]
+
+            elif table_name in ("sim_trades", "training_trades") and "asset" in cols:
+                src_col = "source_db, " if table_name == "training_trades" else ""
+                rows = conn.execute(
+                    f"""SELECT asset, direction, COUNT(*),
+                        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END),
+                        ROUND(AVG(r_multiple), 3),
+                        ROUND(SUM(pnl), 4)
+                        FROM {table_name}
+                        WHERE status != 'open'
+                        GROUP BY asset, direction ORDER BY asset, direction"""
+                ).fetchall()
+                summary["per_asset_dir"] = [
+                    {"asset": r[0], "direction": r[1], "trades": r[2],
+                     "wins": r[3], "win_rate": round(r[3]/r[2]*100,1) if r[2] else 0,
+                     "avg_r": r[4], "total_pnl": r[5]}
+                    for r in rows
+                ]
+                total = conn.execute(
+                    f"SELECT COUNT(*), SUM(CASE WHEN pnl>0 THEN 1 ELSE 0 END), "
+                    f"ROUND(AVG(r_multiple),3) FROM {table_name} WHERE status != 'open'"
+                ).fetchone()
+                summary["totals"] = {
+                    "trades": total[0], "wins": total[1],
+                    "win_rate": round(total[1]/total[0]*100,1) if total[0] else 0,
+                    "avg_r": total[2],
+                }
+
+            conn.close()
+            return summary
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+
     return app
