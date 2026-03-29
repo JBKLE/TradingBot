@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
@@ -2216,6 +2217,7 @@ with tab_training:
                 )
 
                 # ── Spezielle Zusammenfassung ─────────────────────────────
+                _dv_sum: dict = {}
                 if _dv_tbl_choice in ("price_history", "sim_trades", "training_trades"):
                     try:
                         _dv_sum_resp = httpx.get(
@@ -2266,6 +2268,147 @@ with tab_training:
                             })
                         _dv_df = pd.DataFrame(_dv_tr_rows)
                         st.dataframe(_dv_df, hide_index=True, use_container_width=True)
+
+                # ── Chart ────────────────────────────────────────────────
+                if _dv_tbl_choice in ("price_history", "sim_trades", "training_trades"):
+                    st.divider()
+                    _chart_col1, _chart_col2 = st.columns([3, 1])
+
+                    # Asset-Auswahl für Chart
+                    _chart_asset = None
+                    if _dv_tbl_choice == "price_history" and "per_asset" in _dv_sum:
+                        _chart_assets = [p["asset"] for p in _dv_sum["per_asset"]]
+                        if _chart_assets:
+                            _chart_asset = _chart_col2.selectbox(
+                                "Asset (Chart):", _chart_assets, key="dv_chart_asset"
+                            )
+                    elif _dv_tbl_choice in ("sim_trades", "training_trades") \
+                            and "per_asset_dir" in _dv_sum:
+                        _chart_assets = sorted({r["asset"] for r in _dv_sum["per_asset_dir"]})
+                        _chart_asset = _chart_col2.selectbox(
+                            "Asset (Chart):", ["alle"] + _chart_assets, key="dv_chart_asset"
+                        )
+                        if _chart_asset == "alle":
+                            _chart_asset = None
+
+                    try:
+                        _chart_params = {}
+                        if _chart_asset:
+                            _chart_params["asset"] = _chart_asset
+                        _chart_resp = httpx.get(
+                            f"{BOT_API_URL}/api/db-viewer"
+                            f"/{_dv_selected['name']}/chart/{_dv_tbl_choice}",
+                            params=_chart_params,
+                            timeout=20.0,
+                        )
+                        _chart_data = _chart_resp.json()
+                    except Exception as _ce:
+                        _chart_data = {"type": "none"}
+
+                    _ct = _chart_data.get("type")
+
+                    if _ct == "ohlc" and _chart_data.get("timestamps"):
+                        _stride = _chart_data.get("stride", 1)
+                        _total  = _chart_data.get("total", 0)
+                        with _chart_col1:
+                            st.caption(
+                                f"**{_chart_data['asset']}** — Close-Preis  "
+                                f"({_total:,} Kerzen, jede {_stride}. Kerze dargestellt)"
+                            )
+                            _fig = go.Figure()
+                            _fig.add_trace(go.Candlestick(
+                                x=_chart_data["timestamps"],
+                                open=_chart_data["open"],
+                                high=_chart_data["high"],
+                                low=_chart_data["low"],
+                                close=_chart_data["close"],
+                                name=_chart_data["asset"],
+                                increasing_line_color="#00ff41",
+                                decreasing_line_color="#ff4444",
+                            ))
+                            _fig.update_layout(
+                                paper_bgcolor="#0a0a0a",
+                                plot_bgcolor="#0d0d0d",
+                                font=dict(color="#00ff41", family="Share Tech Mono"),
+                                xaxis=dict(
+                                    gridcolor="#001a00", showgrid=True,
+                                    rangeslider=dict(visible=False),
+                                ),
+                                yaxis=dict(gridcolor="#001a00", showgrid=True),
+                                margin=dict(l=10, r=10, t=10, b=10),
+                                height=350,
+                            )
+                            st.plotly_chart(_fig, use_container_width=True)
+
+                    elif _ct == "trades" and _chart_data.get("timestamps"):
+                        with _chart_col1:
+                            st.caption("**Kumulatives PnL** über Zeit")
+                            _cum = _chart_data["cumulative"]
+                            _colors = [
+                                "#00ff41" if v >= 0 else "#ff4444"
+                                for v in _cum
+                            ]
+                            _fig_pnl = go.Figure()
+                            _fig_pnl.add_trace(go.Scatter(
+                                x=_chart_data["timestamps"],
+                                y=_cum,
+                                mode="lines",
+                                line=dict(color="#00ff41", width=1.5),
+                                fill="tozeroy",
+                                fillcolor="rgba(0,255,65,0.08)",
+                                name="Kum. PnL",
+                            ))
+                            _fig_pnl.add_hline(
+                                y=0, line_color="#007a1f", line_dash="dash", line_width=1
+                            )
+                            _fig_pnl.update_layout(
+                                paper_bgcolor="#0a0a0a",
+                                plot_bgcolor="#0d0d0d",
+                                font=dict(color="#00ff41", family="Share Tech Mono"),
+                                xaxis=dict(gridcolor="#001a00", showgrid=True),
+                                yaxis=dict(gridcolor="#001a00", showgrid=True),
+                                margin=dict(l=10, r=10, t=10, b=10),
+                                height=230,
+                                showlegend=False,
+                            )
+                            st.plotly_chart(_fig_pnl, use_container_width=True)
+
+                        if _chart_data.get("bar_labels"):
+                            with _chart_col1:
+                                st.caption("**Win-Rate** pro Asset / Richtung")
+                                _bar_colors = [
+                                    "#00ff41" if wr >= 50 else "#ff4444"
+                                    for wr in _chart_data["bar_wr"]
+                                ]
+                                _fig_bar = go.Figure()
+                                _fig_bar.add_trace(go.Bar(
+                                    x=_chart_data["bar_labels"],
+                                    y=_chart_data["bar_wr"],
+                                    marker_color=_bar_colors,
+                                    text=[f"{w:.1f}%<br>({n})" for w, n in zip(
+                                        _chart_data["bar_wr"], _chart_data["bar_trades"]
+                                    )],
+                                    textposition="outside",
+                                    textfont=dict(color="#00ff41", size=10),
+                                    name="Win-Rate",
+                                ))
+                                _fig_bar.add_hline(
+                                    y=50, line_color="#ffaa00", line_dash="dash", line_width=1
+                                )
+                                _fig_bar.update_layout(
+                                    paper_bgcolor="#0a0a0a",
+                                    plot_bgcolor="#0d0d0d",
+                                    font=dict(color="#00ff41", family="Share Tech Mono"),
+                                    xaxis=dict(gridcolor="#001a00", tickangle=-30),
+                                    yaxis=dict(
+                                        gridcolor="#001a00", showgrid=True,
+                                        range=[0, 110], ticksuffix="%",
+                                    ),
+                                    margin=dict(l=10, r=10, t=10, b=60),
+                                    height=280,
+                                    showlegend=False,
+                                )
+                                st.plotly_chart(_fig_bar, use_container_width=True)
 
                 st.divider()
 

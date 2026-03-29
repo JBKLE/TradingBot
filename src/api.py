@@ -1134,4 +1134,112 @@ def create_api() -> FastAPI:
         except Exception as exc:
             raise HTTPException(500, str(exc))
 
+    @app.get("/api/db-viewer/{db_name}/chart/{table_name}")
+    async def db_viewer_chart(
+        db_name: str,
+        table_name: str,
+        asset: str | None = None,
+        points: int = 600,
+    ):
+        """Chart-Daten: OHLC für price_history, kumulatives PnL für Trades."""
+        import sqlite3 as _sq
+        db_name = os.path.basename(db_name)
+        fpath   = os.path.join(config.DATA_DIR, db_name)
+        if not os.path.exists(fpath):
+            raise HTTPException(404, f"DB '{db_name}' nicht gefunden")
+
+        try:
+            conn = _sq.connect(fpath, timeout=10)
+
+            if table_name == "price_history":
+                if not asset:
+                    # Erster verfügbarer Asset
+                    row = conn.execute("SELECT asset FROM price_history LIMIT 1").fetchone()
+                    asset = row[0] if row else None
+                if not asset:
+                    conn.close()
+                    return {"type": "none"}
+
+                total = conn.execute(
+                    "SELECT COUNT(*) FROM price_history WHERE asset=?", [asset]
+                ).fetchone()[0]
+                stride = max(1, total // points)
+
+                rows = conn.execute(
+                    """SELECT timestamp, open, high, low, close
+                       FROM price_history WHERE asset=?
+                       ORDER BY timestamp""",
+                    [asset],
+                ).fetchall()
+                conn.close()
+
+                # Downsample
+                sampled = rows[::stride]
+                return {
+                    "type":       "ohlc",
+                    "asset":      asset,
+                    "timestamps": [r[0] for r in sampled],
+                    "open":       [r[1] for r in sampled],
+                    "high":       [r[2] for r in sampled],
+                    "low":        [r[3] for r in sampled],
+                    "close":      [r[4] for r in sampled],
+                    "total":      total,
+                    "stride":     stride,
+                }
+
+            elif table_name in ("sim_trades", "training_trades"):
+                asset_where = "AND asset = ?" if asset else ""
+                params_a    = [asset] if asset else []
+
+                rows = conn.execute(
+                    f"""SELECT entry_timestamp, pnl, asset, direction
+                        FROM {table_name}
+                        WHERE status != 'open' {asset_where}
+                        ORDER BY entry_timestamp""",
+                    params_a,
+                ).fetchall()
+
+                # Per-asset win-rate
+                wr_rows = conn.execute(
+                    f"""SELECT asset, direction,
+                           COUNT(*),
+                           SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END)
+                        FROM {table_name}
+                        WHERE status != 'open' {asset_where}
+                        GROUP BY asset, direction ORDER BY asset, direction""",
+                    params_a,
+                ).fetchall()
+                conn.close()
+
+                # Cumulative PnL
+                cum = 0.0
+                timestamps, cumulative = [], []
+                for ts, pnl, *_ in rows:
+                    cum += pnl or 0.0
+                    timestamps.append(ts)
+                    cumulative.append(round(cum, 4))
+
+                # Bar-Daten
+                bar_labels = [f"{r[0]} {r[1]}" for r in wr_rows]
+                bar_wr     = [round(r[3] / r[2] * 100, 1) if r[2] else 0.0 for r in wr_rows]
+                bar_trades = [r[2] for r in wr_rows]
+
+                return {
+                    "type":        "trades",
+                    "timestamps":  timestamps,
+                    "cumulative":  cumulative,
+                    "bar_labels":  bar_labels,
+                    "bar_wr":      bar_wr,
+                    "bar_trades":  bar_trades,
+                }
+
+            else:
+                conn.close()
+                return {"type": "none"}
+
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+
     return app
