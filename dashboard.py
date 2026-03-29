@@ -1818,8 +1818,66 @@ with tab_history:
     sim_result = st.session_state.get("sim_result")
     if sim_result and "error" not in sim_result:
         st.markdown("---")
+        # Banner wenn aus Historie geladen
+        _hmeta = sim_result.get("_history_meta")
+        if _hmeta:
+            _h_assets = ", ".join(_hmeta.get("assets") or []) or "alle Assets"
+            st.info(
+                f"Geladen aus Historie — "
+                f"**Run #{_hmeta['run_id']}** | "
+                f"{str(_hmeta.get('run_at',''))[:16]} | "
+                f"Modell: `{_hmeta.get('model_name','—')}` | "
+                f"DB: `{_hmeta.get('output_db','—')}` | "
+                f"Assets: {_h_assets} | "
+                f"Conf ≥ {_hmeta.get('confidence','—')}"
+            )
+            if st.button("Ergebnis verwerfen", key="clear_history_result"):
+                st.session_state.pop("sim_result", None)
+                st.rerun()
         st.markdown("#### Ergebnis")
 
+        # ── KI-Analyse ────────────────────────────────────────────────────
+        _ai_col1, _ai_col2 = st.columns([1, 4])
+        with _ai_col1:
+            _run_analysis = st.button(
+                "KI-Analyse starten",
+                key="run_sim_analysis",
+                type="primary",
+                help="Claude Opus 4.6 analysiert diesen Run im Vergleich mit der Historie",
+            )
+        with _ai_col2:
+            if st.session_state.get("sim_analysis"):
+                if st.button("Analyse verwerfen", key="clear_sim_analysis"):
+                    st.session_state.pop("sim_analysis", None)
+                    st.rerun()
+
+        if _run_analysis:
+            st.session_state.pop("sim_analysis", None)
+            _analysis_box = st.empty()
+            _analysis_text = ""
+            try:
+                with httpx.stream(
+                    "POST",
+                    f"{BOT_API_URL}/api/sim-analysis",
+                    json={
+                        "current_result": sim_result,
+                        "history_limit": 10,
+                    },
+                    timeout=120.0,
+                ) as _stream:
+                    for _chunk in _stream.iter_text():
+                        _analysis_text += _chunk
+                        _analysis_box.markdown(_analysis_text + " ▌")
+                _analysis_box.markdown(_analysis_text)
+                st.session_state["sim_analysis"] = _analysis_text
+            except Exception as _ae:
+                st.error(f"Analyse-Fehler: {_ae}")
+
+        if st.session_state.get("sim_analysis") and not _run_analysis:
+            st.markdown("##### KI-Analyse")
+            st.markdown(st.session_state["sim_analysis"])
+
+        st.markdown("---")
         col_r1, col_r2, col_r3, col_r4 = st.columns(4)
         col_r1.metric("TRADES",       sim_result.get("trades", 0))
         col_r2.metric(
@@ -1968,3 +2026,138 @@ with tab_history:
 
     elif sim_result and "error" in sim_result:
         st.error(f"Simulation fehlgeschlagen: {sim_result['error']}")
+
+    # ── Simulationshistorie ────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("#### 5. Simulationshistorie")
+
+    def _load_sim_history():
+        try:
+            r = httpx.get(f"{BOT_API_URL}/api/sim-history?limit=30", timeout=5.0)
+            return r.json().get("runs", [])
+        except Exception:
+            return []
+
+    if st.button("Historie aktualisieren", key="sim_history_refresh"):
+        st.session_state["sim_history"] = _load_sim_history()
+    if "sim_history" not in st.session_state:
+        st.session_state["sim_history"] = _load_sim_history()
+
+    _runs = st.session_state.get("sim_history", [])
+    if not _runs:
+        st.info("Noch keine Simulation-Runs protokolliert.")
+    else:
+        # Kompakte Übersichtstabelle
+        _hist_rows = []
+        for _r in _runs:
+            _assets_str = ", ".join(_r.get("assets") or []) or "alle"
+            _fin_str = (
+                f"€{_r['start_capital']:,.0f} → €{_r['end_capital']:,.0f} "
+                f"({_r['total_return_pct']:+.1f}%)"
+                if _r.get("start_capital") is not None
+                else "—"
+            )
+            _mc = " ⚠ MARGIN CALL" if _r.get("margin_call") else ""
+            _status_icon = {"completed": "✔", "cancelled": "⏹", "error": "✖"}.get(
+                _r.get("status", ""), "?"
+            )
+            _hist_rows.append({
+                "#":          _r["id"],
+                "Status":     f"{_status_icon} {_r.get('status', '')}",
+                "Start":      str(_r.get("run_at", ""))[:16],
+                "Dauer (s)":  _r.get("duration_sec", ""),
+                "Modell":     _r.get("model_name", ""),
+                "Assets":     _assets_str,
+                "Conf":       _r.get("confidence_threshold", ""),
+                "Output-DB":  _r.get("output_db", ""),
+                "Trades":     _r.get("trades", 0),
+                "WR %":       f"{_r.get('win_rate', 0):.1f}",
+                "P/L (Pkt)":  f"{_r.get('total_pnl_points', 0):+.4f}",
+                "Avg R":      f"{_r.get('avg_r_multiple', 0):+.3f}",
+                "Finanzen":   f"{_fin_str}{_mc}",
+            })
+        hist_df = pd.DataFrame(_hist_rows)
+        st.dataframe(hist_df, hide_index=True, use_container_width=True)
+
+        # Detail-Expander für jeden Run
+        for _r in _runs:
+            _label = (
+                f"#{_r['id']} | {str(_r.get('run_at',''))[:16]} | "
+                f"{_r.get('model_name','')} | "
+                f"{', '.join(_r.get('assets') or []) or 'alle Assets'} | "
+                f"{_r.get('trades', 0)} Trades"
+            )
+            with st.expander(_label, expanded=False):
+                dc1, dc2, dc3 = st.columns(3)
+                with dc1:
+                    st.markdown("**Modell**")
+                    st.code(_r.get("model_path", "—"))
+                    st.caption(f"Geändert: {_r.get('model_modified_at','—')}")
+                with dc2:
+                    st.markdown("**Einstellungen**")
+                    st.markdown(
+                        f"- Assets: `{', '.join(_r.get('assets') or []) or 'alle'}`\n"
+                        f"- Zeitraum: `{_r.get('start_date','—')}` – `{_r.get('end_date','—')}`\n"
+                        f"- Confidence: `{_r.get('confidence_threshold','—')}`\n"
+                        f"- Output-DB: `{_r.get('output_db','—')}`\n"
+                        f"- Kapital: `{_r.get('capital','—')}` EUR | "
+                        f"Risiko: `{(_r.get('risk_pct') or 0)*100:.1f}%` | "
+                        f"Hebel: `{_r.get('leverage','—')}`"
+                    )
+                with dc3:
+                    st.markdown("**Ergebnisse**")
+                    st.markdown(
+                        f"- Trades: `{_r.get('trades',0)}` "
+                        f"({_r.get('wins',0)}W / {_r.get('losses',0)}L)\n"
+                        f"- Win-Rate: `{_r.get('win_rate',0):.1f}%`\n"
+                        f"- P/L: `{_r.get('total_pnl_points',0):+.4f}` Pkt\n"
+                        f"- Avg R: `{_r.get('avg_r_multiple',0):+.4f}`\n"
+                        f"- Dauer: `{_r.get('duration_sec','—')}s`"
+                    )
+                    if _r.get("start_capital") is not None:
+                        st.markdown(
+                            f"- Startkapital: `€{_r['start_capital']:,.2f}`\n"
+                            f"- Endkapital: `€{_r.get('end_capital',0):,.2f}`\n"
+                            f"- Rendite: `{_r.get('total_return_pct',0):+.2f}%`\n"
+                            f"- Max DD: `{_r.get('max_drawdown_pct',0):.2f}%`"
+                        )
+                        if _r.get("margin_call"):
+                            st.error("MARGIN CALL")
+
+                # Per-Asset Breakdown
+                _pa = _r.get("per_asset") or {}
+                if _pa:
+                    st.markdown("**Pro Asset**")
+                    pa_cols = st.columns(len(_pa))
+                    for _i, (_asset, _stats) in enumerate(_pa.items()):
+                        with pa_cols[_i]:
+                            st.metric(
+                                _asset,
+                                f"{_stats.get('trades', 0)} Trades",
+                                f"WR: {_stats.get('win_rate', 0):.0f}% | "
+                                f"P/L: {_stats.get('pnl', 0):+.4f}",
+                            )
+                if _r.get("error_message"):
+                    st.error(f"Fehler: {_r['error_message']}")
+
+                # Laden-Button
+                if _r.get("status") == "completed" and _r.get("trades", 0) > 0:
+                    if st.button(
+                        f"Ergebnis laden & anzeigen",
+                        key=f"load_run_{_r['id']}",
+                        type="primary",
+                    ):
+                        try:
+                            _load_resp = httpx.get(
+                                f"{BOT_API_URL}/api/sim-history/{_r['id']}/load",
+                                timeout=15.0,
+                            )
+                            _loaded = _load_resp.json()
+                            if "error" in _loaded:
+                                st.error(f"Fehler: {_loaded['error']}")
+                            else:
+                                st.session_state["sim_result"] = _loaded
+                                st.success("Geladen! Ergebnis wird oben angezeigt.")
+                                st.rerun()
+                        except Exception as _e:
+                            st.error(f"API-Fehler: {_e}")

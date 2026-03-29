@@ -8,6 +8,7 @@ from datetime import datetime
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from . import config, database
@@ -697,9 +698,18 @@ def create_api() -> FastAPI:
                 "pct": round(current / total * 100, 1) if total > 0 else 0,
             }
 
+        from .sim_log import save_run
+        import time as _time
+
+        _run_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+        _run_start_ts = _time.monotonic()
+
         async def _run():
             _sim_task_state["running"] = True
             _sim_task_state["result"] = None
+            _status = "error"
+            _error_msg = ""
+            result: dict = {}
             try:
                 result = await sim.run(
                     assets=body.assets,
@@ -708,12 +718,60 @@ def create_api() -> FastAPI:
                     progress_callback=on_progress,
                 )
                 _sim_task_state["result"] = result
+                _status = "cancelled" if sim._cancelled else "completed"
             except Exception as exc:
-                _sim_task_state["result"] = {"error": str(exc)}
+                _error_msg = str(exc)
+                _sim_task_state["result"] = {"error": _error_msg}
                 logger.exception("Timeline sim failed: %s", exc)
             finally:
                 _sim_task_state["running"] = False
                 _sim_task_state["simulator"] = None
+
+            # ── Protokoll in sim_history.db speichern ────────────────────
+            try:
+                _duration = _time.monotonic() - _run_start_ts
+                _fin = result.get("financial", {})
+                _mp = sim.model_path
+                _mtime = ""
+                if _mp and os.path.exists(_mp):
+                    import datetime as _dt
+                    _mtime = _dt.datetime.fromtimestamp(
+                        os.path.getmtime(_mp), tz=_dt.timezone.utc
+                    ).strftime("%Y-%m-%dT%H:%M:%S")
+                save_run(
+                    run_at=_run_at,
+                    finished_at=datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+                    duration_sec=_duration,
+                    status=_status,
+                    model_name=os.path.basename(_mp) if _mp else "",
+                    model_path=_mp,
+                    model_modified_at=_mtime,
+                    assets=body.assets or [],
+                    start_date=body.start_date,
+                    end_date=body.end_date,
+                    confidence_threshold=body.confidence_threshold,
+                    output_db=os.path.basename(output_db_path),
+                    capital=body.capital,
+                    risk_pct=body.risk_pct,
+                    leverage=body.leverage,
+                    eur_usd=body.eur_usd,
+                    total_minutes=result.get("total_minutes", 0),
+                    trades=result.get("trades", 0),
+                    wins=result.get("wins", 0),
+                    losses=result.get("losses", 0),
+                    win_rate=result.get("win_rate", 0.0),
+                    total_pnl_points=result.get("total_pnl_points", 0.0),
+                    avg_r_multiple=result.get("avg_r_multiple", 0.0),
+                    start_capital=_fin.get("start_capital"),
+                    end_capital=_fin.get("end_capital"),
+                    total_return_pct=_fin.get("total_return_pct"),
+                    max_drawdown_pct=_fin.get("max_drawdown_pct"),
+                    margin_call=bool(_fin.get("margin_call", False)),
+                    per_asset=result.get("per_asset", {}),
+                    error_message=_error_msg,
+                )
+            except Exception as _log_exc:
+                logger.warning("sim_log save_run failed: %s", _log_exc)
 
         asyncio.create_task(_run())
         return {"status": "started", "message": "Zeitstrahl-Simulation gestartet"}
@@ -752,6 +810,125 @@ def create_api() -> FastAPI:
             sim.cancel()
             return {"status": "cancelling"}
         return {"status": "not_running"}
+
+    @app.get("/api/sim-history")
+    async def get_sim_history(limit: int = 50):
+        """Letzte N Simulation-Runs aus sim_history.db laden."""
+        from .sim_log import load_runs
+        return {"runs": load_runs(limit=limit)}
+
+    @app.get("/api/sim-history/{run_id}/load")
+    async def load_sim_run(run_id: int):
+        """Einen gespeicherten Run inkl. Trades aus der Output-DB rekonstruieren."""
+        import sqlite3 as _sq
+        from .sim_log import load_runs
+        from .fetch_history import HISTORY_DB_PATH
+
+        runs = load_runs(limit=10000)
+        run = next((r for r in runs if r["id"] == run_id), None)
+        if not run:
+            return {"error": f"Run #{run_id} nicht gefunden"}
+
+        # Trades aus der damaligen Output-DB laden
+        data_dir = os.path.dirname(HISTORY_DB_PATH)
+        output_db_name = run.get("output_db") or "simLastCharts.db"
+        output_db_path = os.path.join(data_dir, output_db_name)
+
+        trade_list: list[dict] = []
+        start_ts = end_ts = ""
+        if os.path.exists(output_db_path):
+            try:
+                conn = _sq.connect(output_db_path, timeout=5)
+                rows = conn.execute(
+                    """SELECT asset, direction, entry_timestamp, exit_timestamp,
+                              entry_price, exit_price, pnl, r_multiple, status
+                       FROM sim_trades
+                       WHERE sl_variant = 'dqn_timeline'
+                       ORDER BY entry_timestamp ASC"""
+                ).fetchall()
+                conn.close()
+                for row in rows:
+                    trade_list.append({
+                        "asset":       row[0],
+                        "direction":   row[1],
+                        "entry_ts":    row[2],
+                        "exit_ts":     row[3],
+                        "entry_price": row[4],
+                        "exit_price":  row[5],
+                        "pnl":         row[6],
+                        "r_multiple":  row[7],
+                        "status":      row[8],
+                        "confidence":  None,
+                        "netto_pnl_eur": None,
+                        "capital_after": None,
+                    })
+                if trade_list:
+                    start_ts = trade_list[0]["entry_ts"] or ""
+                    end_ts   = trade_list[-1]["exit_ts"]  or ""
+            except Exception as exc:
+                return {"error": f"Trades konnten nicht geladen werden: {exc}"}
+        else:
+            return {"error": f"Output-DB '{output_db_name}' nicht gefunden"}
+
+        # Finanzdaten aus gespeichertem Run
+        fin: dict = {}
+        if run.get("start_capital") is not None:
+            fin = {
+                "start_capital":    run["start_capital"],
+                "end_capital":      run["end_capital"],
+                "total_return_pct": run["total_return_pct"],
+                "max_drawdown_pct": run["max_drawdown_pct"],
+                "margin_call":      bool(run.get("margin_call")),
+                "equity_curve":     [],   # nicht in DB gespeichert
+            }
+
+        return {
+            "total_minutes":    run.get("total_minutes", 0),
+            "trades":           run.get("trades", 0),
+            "wins":             run.get("wins", 0),
+            "losses":           run.get("losses", 0),
+            "win_rate":         run.get("win_rate", 0.0),
+            "total_pnl_points": run.get("total_pnl_points", 0.0),
+            "avg_r_multiple":   run.get("avg_r_multiple", 0.0),
+            "start_ts":         start_ts,
+            "end_ts":           end_ts,
+            "per_asset":        run.get("per_asset", {}),
+            "financial":        fin,
+            "trade_list":       trade_list,
+            # Metadaten für das Dashboard-Banner
+            "_history_meta": {
+                "run_id":     run_id,
+                "run_at":     run.get("run_at", ""),
+                "model_name": run.get("model_name", ""),
+                "output_db":  output_db_name,
+                "confidence": run.get("confidence_threshold"),
+                "assets":     run.get("assets", []),
+            },
+        }
+
+    # ── POST /api/sim-analysis ───────────────────────────────────────────
+    class SimAnalysisRequest(BaseModel):
+        current_result: dict
+        history_limit: int = 10
+
+    @app.post("/api/sim-analysis")
+    async def sim_analysis(body: SimAnalysisRequest):
+        """Startet Claude-Analyse und streamt das Ergebnis als text/plain."""
+        from .sim_log import load_runs
+        from .sim_analyzer import stream_analysis
+
+        history_runs = load_runs(limit=body.history_limit + 1)
+        # Aktuellen Run (falls aus Historie geladen) aus dem Verlauf ausschließen
+        current_run_id = (body.current_result.get("_history_meta") or {}).get("run_id")
+        if current_run_id:
+            history_runs = [r for r in history_runs if r["id"] != current_run_id]
+        history_runs = history_runs[: body.history_limit]
+
+        async def _generate():
+            async for chunk in stream_analysis(body.current_result, history_runs):
+                yield chunk
+
+        return StreamingResponse(_generate(), media_type="text/plain; charset=utf-8")
 
     @app.get("/api/sim-databases")
     async def list_sim_databases():

@@ -63,6 +63,7 @@ class TimelineSimulator:
         self._device = self._resolve_device()
         self._net: DuelingDQN | None = None
         self._cancelled = False
+        self.model_path: str = ""   # gesetzt sobald Modell geladen ist
         # Financial params
         self.capital   = capital
         self.risk_pct  = risk_pct
@@ -96,6 +97,7 @@ class TimelineSimulator:
         if self._net is not None:
             return self._net
         path = _get_latest_model_path(self._models_dir)
+        self.model_path = path
         logger.info("Timeline sim: loading model %s (device=%s)", path, self._device)
         net = DuelingDQN(ACTION_SIZE).to(self._device)
         ckpt = torch.load(path, map_location=self._device, weights_only=True)
