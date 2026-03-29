@@ -654,6 +654,8 @@ def create_api() -> FastAPI:
         risk_pct: float | None = None
         leverage: int   | None = None
         eur_usd:  float = 1.08
+        # Output DB filename (basename only, resolved inside DATA_DIR)
+        output_db: str | None = None
 
     _sim_task_state: dict = {"running": False, "progress": {}, "result": None, "simulator": None}
 
@@ -664,6 +666,17 @@ def create_api() -> FastAPI:
             return {"status": "already_running", "progress": _sim_task_state["progress"]}
 
         from .timeline_sim import TimelineSimulator
+        from .fetch_history import HISTORY_DB_PATH
+
+        # Resolve output_db safely: basename only, always inside DATA_DIR
+        data_dir = os.path.dirname(HISTORY_DB_PATH)
+        if body.output_db:
+            basename = os.path.basename(body.output_db)
+            if not basename.endswith(".db"):
+                basename += ".db"
+            output_db_path = os.path.join(data_dir, basename)
+        else:
+            output_db_path = HISTORY_DB_PATH
 
         sim = TimelineSimulator(
             confidence_threshold=body.confidence_threshold,
@@ -671,6 +684,7 @@ def create_api() -> FastAPI:
             risk_pct=body.risk_pct,
             leverage=body.leverage,
             eur_usd=body.eur_usd,
+            output_db_path=output_db_path,
         )
         _sim_task_state["simulator"] = sim
 
@@ -738,5 +752,22 @@ def create_api() -> FastAPI:
             sim.cancel()
             return {"status": "cancelling"}
         return {"status": "not_running"}
+
+    @app.get("/api/sim-databases")
+    async def list_sim_databases():
+        """Alle .db-Dateien im DATA_DIR auflisten (fuer DB-Auswahl im Dashboard)."""
+        from .fetch_history import HISTORY_DB_PATH
+        data_dir = os.path.dirname(HISTORY_DB_PATH)
+        default_name = os.path.basename(HISTORY_DB_PATH)
+        dbs = []
+        try:
+            for fname in sorted(os.listdir(data_dir)):
+                if fname.endswith(".db"):
+                    fpath = os.path.join(data_dir, fname)
+                    size_kb = round(os.path.getsize(fpath) / 1024, 1)
+                    dbs.append({"name": fname, "size_kb": size_kb})
+        except Exception:
+            pass
+        return {"databases": dbs, "default": default_name, "data_dir": data_dir}
 
     return app

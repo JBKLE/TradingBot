@@ -53,8 +53,11 @@ class TimelineSimulator:
         risk_pct: float | None = None,
         leverage: int | None = None,
         eur_usd: float = 1.08,
+        # Output DB for trades (None = same as db_path)
+        output_db_path: str | None = None,
     ) -> None:
         self.db_path = db_path
+        self.output_db_path = output_db_path or db_path
         self.confidence_threshold = confidence_threshold
         self._models_dir = models_dir or config.AI_MODELS_DIR
         self._device = self._resolve_device()
@@ -179,8 +182,25 @@ class TimelineSimulator:
 
         target_assets = assets or list(config.WATCHLIST.keys())
 
-        # Clear previous timeline trades
-        async with aiosqlite.connect(self.db_path) as db:
+        # Ensure sim_trades table exists in output DB and clear previous run
+        async with aiosqlite.connect(self.output_db_path) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS sim_trades (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    asset           TEXT,
+                    direction       TEXT,
+                    sl_variant      TEXT,
+                    entry_timestamp TEXT,
+                    entry_price     REAL,
+                    sl_price        REAL,
+                    tp_price        REAL,
+                    exit_timestamp  TEXT,
+                    exit_price      REAL,
+                    status          TEXT,
+                    pnl             REAL,
+                    r_multiple      REAL
+                )
+            """)
             await db.execute("DELETE FROM sim_trades WHERE sl_variant = 'dqn_timeline'")
             await db.commit()
 
@@ -485,7 +505,7 @@ class TimelineSimulator:
             )
             for t in trades
         ]
-        conn = sqlite3.connect(self.db_path, timeout=10)
+        conn = sqlite3.connect(self.output_db_path, timeout=10)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executemany(
             """INSERT OR IGNORE INTO sim_trades

@@ -1610,6 +1610,46 @@ with tab_history:
     else:
         sim_capital, sim_risk_pct, sim_leverage, sim_eur_usd = None, None, None, 1.08
 
+    # ── Ausgabe-Datenbank wählen ──────────────────────────────────────────
+    st.markdown("#### 4. Ausgabe-Datenbank")
+    _DB_TRAINING = "simLastCharts.db"
+    _NEW_DB_OPTION = "[ Neue Datenbank anlegen... ]"
+
+    try:
+        _db_resp = httpx.get(f"{BOT_API_URL}/api/sim-databases", timeout=4.0)
+        _db_list = [d["name"] for d in _db_resp.json().get("databases", [])]
+    except Exception:
+        _db_list = [_DB_TRAINING]
+
+    _db_options = _db_list + [_NEW_DB_OPTION]
+    # Default-Index = simLastCharts.db
+    _default_idx = _db_options.index(_DB_TRAINING) if _DB_TRAINING in _db_options else 0
+
+    _db_col1, _db_col2 = st.columns([2, 3])
+    with _db_col1:
+        _selected_db = st.selectbox(
+            "Trades speichern in",
+            options=_db_options,
+            index=_default_idx,
+            key="sim_output_db_select",
+            help="Trainings-DB = simLastCharts.db | Für Tests eine separate DB wählen",
+        )
+    with _db_col2:
+        if _selected_db == _NEW_DB_OPTION:
+            _new_db_name = st.text_input(
+                "Neuer Datenbankname",
+                value="sim_test",
+                key="sim_output_db_new",
+                placeholder="z.B. sim_test_v4",
+            )
+            sim_output_db = _new_db_name.strip() or "sim_test"
+        else:
+            sim_output_db = _selected_db
+            if _selected_db == _DB_TRAINING:
+                st.warning("Trainings-DB — Nur für finalisierte Läufe, nicht für Tests!")
+            else:
+                st.success(f"Test-DB: {_selected_db}")
+
     # ── Session state init ────────────────────────────────────────────────
     if "sim_running" not in st.session_state:
         st.session_state.sim_running = False
@@ -1651,6 +1691,7 @@ with tab_history:
                     "risk_pct": sim_risk_pct,
                     "leverage": sim_leverage,
                     "eur_usd":  sim_eur_usd,
+                    "output_db": sim_output_db,
                 },
                 timeout=10.0,
             )
@@ -1812,13 +1853,51 @@ with tab_history:
             if fin.get("margin_call"):
                 st.error("MARGIN CALL — Simulation wurde vorzeitig beendet (Kapital aufgebraucht)")
 
-            # Equity curve in EUR
+            # Equity curve in EUR – Gesamt + pro Asset (kumulativer EUR-Beitrag)
             eq_curve = fin.get("equity_curve", [])
-            if len(eq_curve) > 1:
-                eq_df = pd.DataFrame({"Kapital (EUR)": eq_curve})
-                eq_df.index.name = "Trade #"
+            _tl_for_eur = sim_result.get("trade_list", [])
+            if len(eq_curve) > 1 or _tl_for_eur:
                 st.markdown("##### Equity-Kurve (EUR)")
-                st.line_chart(eq_df)
+                # Gesamt-Kapital-Kurve aus equity_curve
+                eur_rows: list[dict] = []
+                if eq_curve:
+                    start_cap_val = fin.get("start_capital", eq_curve[0])
+                    for v in eq_curve:
+                        eur_rows.append({"Gesamt (Kapital)": v})
+                # Per-Asset kumulativer EUR P/L (Nulllinie = Startkapital)
+                if _tl_for_eur:
+                    _tl_eur_sorted = sorted(_tl_for_eur, key=lambda t: t.get("exit_ts") or "")
+                    _eur_cum: dict[str, float] = {}
+                    _eur_asset_series: dict[str, list[float]] = {}
+                    for _t in _tl_eur_sorted:
+                        _a = _t["asset"]
+                        _v = _t.get("netto_pnl_eur") or 0.0
+                        _eur_cum[_a] = _eur_cum.get(_a, 0.0) + _v
+                    # Build per-asset series aligned to eq_curve length
+                    _eur_cum2: dict[str, float] = {}
+                    _per_asset_eur: list[dict] = []
+                    for _t in _tl_eur_sorted:
+                        _a = _t["asset"]
+                        _v = _t.get("netto_pnl_eur") or 0.0
+                        _eur_cum2[_a] = _eur_cum2.get(_a, 0.0) + _v
+                        _per_asset_eur.append(dict(_eur_cum2))
+                    if _per_asset_eur and eq_curve:
+                        # Merge Gesamt-Kapital + per-Asset-EUR in einem df
+                        _all_assets_eur = sorted({t["asset"] for t in _tl_eur_sorted})
+                        _combined: list[dict] = []
+                        for i, cap in enumerate(eq_curve):
+                            row: dict = {"Gesamt (Kapital)": cap}
+                            if i < len(_per_asset_eur):
+                                for _a2 in _all_assets_eur:
+                                    row[_a2] = _per_asset_eur[i].get(_a2, None)
+                            _combined.append(row)
+                        eq_combined_df = pd.DataFrame(_combined)
+                        eq_combined_df.index.name = "Trade #"
+                        st.line_chart(eq_combined_df)
+                    elif eq_curve:
+                        eq_df = pd.DataFrame({"Gesamt (Kapital)": eq_curve})
+                        eq_df.index.name = "Trade #"
+                        st.line_chart(eq_df)
 
         st.info("Trades gespeichert in simLastCharts.db → nutzbar fuer TradeAI Training (`--db history`)")
 
@@ -1836,14 +1915,31 @@ with tab_history:
                         f"P/L: {stats.get('pnl', 0):+.4f}",
                     )
 
-        # P/L Equity-Kurve (kumulativ)
+        # P/L Equity-Kurve (kumulativ) – Gesamt + pro Asset
         trade_list = sim_result.get("trade_list", [])
         if trade_list:
             df_trades = pd.DataFrame(trade_list)
             df_trades["cum_pnl"] = df_trades["pnl"].cumsum()
 
             st.markdown("##### Equity-Kurve (kumulativer P/L in Punkten)")
-            st.line_chart(df_trades[["cum_pnl"]].rename(columns={"cum_pnl": "P/L kumulativ"}))
+            # Zeitlich sortiert → per-Asset laufende Summe aufbauen
+            _tl_sorted = sorted(trade_list, key=lambda t: t.get("exit_ts") or "")
+            _all_assets_pnl = sorted({t["asset"] for t in _tl_sorted})
+            _cum_pnl: dict[str, float] = {a: 0.0 for a in _all_assets_pnl}
+            _cum_total = 0.0
+            _pnl_curve_rows: list[dict] = []
+            for _t in _tl_sorted:
+                _a = _t["asset"]
+                _p = _t.get("pnl") or 0.0
+                _cum_pnl[_a] += _p
+                _cum_total   += _p
+                row = {"Gesamt": round(_cum_total, 4)}
+                row.update({a: round(_cum_pnl[a], 4) for a in _all_assets_pnl})
+                _pnl_curve_rows.append(row)
+            if _pnl_curve_rows:
+                pnl_curve_df = pd.DataFrame(_pnl_curve_rows)
+                pnl_curve_df.index.name = "Trade #"
+                st.line_chart(pnl_curve_df)
 
             # Trade-Tabelle
             st.markdown("##### Alle Trades")
