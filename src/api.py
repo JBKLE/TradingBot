@@ -647,6 +647,30 @@ def create_api() -> FastAPI:
             "result": _fetch_task_state["result"],
         }
 
+    # ── GET /api/financial-defaults ────────────────────────────────────────
+    @app.get("/api/financial-defaults")
+    async def get_financial_defaults():
+        """Aktuelle Capital.com Kontoinfos als Vorbelegung für Finanzrechnung."""
+        try:
+            async with CapitalComBroker() as broker:
+                account = await broker.get_account_balance()
+                return {
+                    "balance": account.balance,
+                    "currency": account.currency,
+                    "demo": config.CAPITAL_DEMO,
+                    "default_risk_pct": config.MAX_RISK_PER_TRADE_PCT,
+                    "default_leverage": config.BACKTEST_LEVERAGE,
+                }
+        except Exception as exc:
+            return {
+                "balance": config.BACKTEST_CAPITAL,
+                "currency": "EUR",
+                "demo": config.CAPITAL_DEMO,
+                "default_risk_pct": config.MAX_RISK_PER_TRADE_PCT,
+                "default_leverage": config.BACKTEST_LEVERAGE,
+                "error": str(exc),
+            }
+
     # ── POST /api/run-timeline-sim ───────────────────────────────────────
     class TimelineSimRequest(BaseModel):
         start_date: str | None = None
@@ -658,6 +682,8 @@ def create_api() -> FastAPI:
         risk_pct: float | None = None
         leverage: int   | None = None
         eur_usd:  float = 1.08
+        # Input DB (price data source, basename only)
+        input_db:  str | None = None
         # Output DB filename (basename only, resolved inside DATA_DIR)
         output_db: str | None = None
 
@@ -674,15 +700,20 @@ def create_api() -> FastAPI:
 
         # Resolve output_db safely: basename only, always inside DATA_DIR
         data_dir = os.path.dirname(HISTORY_DB_PATH)
-        if body.output_db:
-            basename = os.path.basename(body.output_db)
-            if not basename.endswith(".db"):
-                basename += ".db"
-            output_db_path = os.path.join(data_dir, basename)
-        else:
-            output_db_path = HISTORY_DB_PATH
+
+        def _resolve_db(name: str | None, default: str) -> str:
+            if not name:
+                return default
+            bn = os.path.basename(name)
+            if not bn.endswith(".db"):
+                bn += ".db"
+            return os.path.join(data_dir, bn)
+
+        input_db_path  = _resolve_db(body.input_db,  HISTORY_DB_PATH)
+        output_db_path = _resolve_db(body.output_db, HISTORY_DB_PATH)
 
         sim = TimelineSimulator(
+            db_path=input_db_path,
             confidence_threshold=body.confidence_threshold,
             capital=body.capital,
             risk_pct=body.risk_pct,

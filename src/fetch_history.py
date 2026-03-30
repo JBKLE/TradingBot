@@ -166,6 +166,17 @@ async def fetch_asset_history(
         from_iso = chunk_start.strftime("%Y-%m-%dT%H:%M:%S")
         to_iso = chunk_end.strftime("%Y-%m-%dT%H:%M:%S")
 
+        # Skip chunks that fall entirely on a weekend (Sa=5, So=6)
+        # A chunk is skipped when both start AND end land on Sat/Sun.
+        # Mid-week chunks that merely *touch* a weekend are kept so we
+        # don't miss Friday-evening or Sunday-night bars.
+        chunk_mid = chunk_start + (chunk_end - chunk_start) / 2
+        if chunk_start.weekday() >= 5 and chunk_end.weekday() >= 5 and chunk_mid.weekday() >= 5:
+            logger.debug("Wochenende übersprungen: %s–%s", from_iso, to_iso)
+            if progress_callback:
+                progress_callback(asset_key, idx + 1, total_chunks, 0)
+            continue
+
         # Check if this chunk is fully covered in DB
         async with aiosqlite.connect(db_path) as db:
             async with db.execute(

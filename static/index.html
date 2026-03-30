@@ -296,6 +296,43 @@ hr.div { border: none; border-top: 1px solid var(--border-dim); margin: 20px 0; 
 /* ─── EMPTY STATE ────────────────────────────────────────── */
 .empty { text-align: center; padding: 30px; color: var(--text-dim); font-size: 12px; }
 
+/* ─── MULTI SELECT ───────────────────────────────────────── */
+.multi-select-wrap { position: relative; }
+.multi-select-trigger {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg3); border: 1px solid var(--border-dim);
+  color: var(--text); border-radius: var(--r); padding: 7px 10px;
+  font-size: 13px; font-family: 'Share Tech Mono', monospace;
+  cursor: pointer; user-select: none; transition: border-color var(--tr);
+}
+.multi-select-trigger:hover { border-color: var(--border); }
+.multi-select-menu {
+  display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: var(--r); z-index: 200; padding: 6px 0;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.multi-select-menu.open { display: block; }
+.multi-opt {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px; cursor: pointer; font-size: 12px;
+  transition: background var(--tr);
+}
+.multi-opt:hover { background: rgba(0,255,65,0.07); }
+.multi-opt input { accent-color: var(--green); cursor: pointer; }
+
+/* ─── SIM HISTORY TABLE ──────────────────────────────────── */
+.hist-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; background: var(--bg3);
+  border-radius: var(--r); border: 1px solid var(--border-dim);
+  margin-bottom: 6px; cursor: pointer; transition: border-color var(--tr);
+}
+.hist-row:hover { border-color: var(--border); }
+.hist-run-id { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--text-dim); min-width: 28px; }
+.hist-meta { flex: 1; font-size: 12px; }
+.hist-stats { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--text-dim); text-align: right; }
+
 @media (max-width: 960px) {
   .g4, .signal-grid { grid-template-columns: 1fr 1fr; }
   .g-settings { grid-template-columns: 1fr; }
@@ -464,45 +501,97 @@ hr.div { border: none; border-top: 1px solid var(--border-dim); margin: 20px 0; 
 
       <div class="section-lbl">Simulation</div>
 
-      <!-- Sim Config -->
-      <div class="g2 mb14">
-        <div class="card">
-          <div class="card-hd"><span class="card-title">Simulation starten</span></div>
-          <div class="form-grid mb14">
-            <div class="f-field">
-              <label>Modell</label>
-              <select id="sim-model"></select>
-            </div>
-            <div class="f-field">
-              <label>Ausgabe-DB</label>
-              <select id="sim-db"></select>
-            </div>
-            <div class="f-field">
-              <label>Assets</label>
-              <select id="sim-assets" multiple size="4" style="height:auto;">
-                <option value="GOLD" selected>GOLD</option>
-                <option value="SILVER" selected>SILVER</option>
-                <option value="OIL_CRUDE" selected>OIL_CRUDE</option>
-                <option value="NATURALGAS" selected>NATURALGAS</option>
-              </select>
-            </div>
-            <div class="f-field">
-              <label>Min. Konfidenz (1–10)</label>
-              <input type="number" id="sim-conf" value="8" min="1" max="10">
-              <label style="margin-top:8px;">Start (leer = alle)</label>
-              <input type="date" id="sim-start">
-              <label style="margin-top:8px;">Ende</label>
-              <input type="date" id="sim-end">
+      <!-- Sim Config Card -->
+      <div class="card mb14">
+        <div class="card-hd"><span class="card-title">Simulation konfigurieren</span></div>
+
+        <!-- Row 1: Modell, Assets, Konfidenz, Zeitraum -->
+        <div class="form-grid mb14">
+          <div class="f-field">
+            <label>Modell</label>
+            <select id="sim-model"></select>
+          </div>
+          <div class="f-field">
+            <label>Assets</label>
+            <!-- Custom multi-select dropdown -->
+            <div class="multi-select-wrap" id="sim-asset-wrap">
+              <div class="multi-select-trigger" onclick="toggleAssetDropdown()">
+                <span id="sim-asset-label">Alle (4)</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6,9 12,15 18,9"/></svg>
+              </div>
+              <div class="multi-select-menu" id="sim-asset-menu">
+                <label class="multi-opt"><input type="checkbox" id="sim-asset-all" checked onchange="toggleAllAssets(this)"> <span>Alle</span></label>
+                <label class="multi-opt"><input type="checkbox" class="sim-asset-cb" value="GOLD" checked onchange="updateAssetLabel()"> <span>GOLD</span></label>
+                <label class="multi-opt"><input type="checkbox" class="sim-asset-cb" value="SILVER" checked onchange="updateAssetLabel()"> <span>SILVER</span></label>
+                <label class="multi-opt"><input type="checkbox" class="sim-asset-cb" value="OIL_CRUDE" checked onchange="updateAssetLabel()"> <span>OIL_CRUDE</span></label>
+                <label class="multi-opt"><input type="checkbox" class="sim-asset-cb" value="NATURALGAS" checked onchange="updateAssetLabel()"> <span>NATURALGAS</span></label>
+              </div>
             </div>
           </div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-primary" style="flex:1;" id="sim-start-btn" onclick="startSim()">Simulation starten</button>
-            <button class="btn btn-ghost" id="sim-cancel-btn" onclick="cancelSim()" style="display:none">Abbrechen</button>
+          <div class="f-field">
+            <label>Min. Konfidenz (1–10)</label>
+            <input type="number" id="sim-conf" value="8" min="1" max="10">
+          </div>
+          <div class="f-field">
+            <label>Start-Datum (leer = alle)</label>
+            <input type="date" id="sim-start">
+            <label style="margin-top:8px;">End-Datum</label>
+            <input type="date" id="sim-end">
           </div>
         </div>
-        <div class="card">
-          <div class="card-hd"><span class="card-title">Letzte Ergebnisse</span><span class="badge badge-d" id="sim-result-badge">—</span></div>
-          <div id="sim-results"><div class="empty">Noch keine Simulation gelaufen.</div></div>
+
+        <!-- Row 2: Eingabe-DB, Ausgabe-DB -->
+        <div class="form-grid mb14">
+          <div class="f-field">
+            <label>Eingabe-DB (Kursdaten-Quelle)</label>
+            <select id="sim-input-db" onchange="onInputDbChange()"></select>
+          </div>
+          <div class="f-field">
+            <label>Ausgabe-DB (Trades speichern)</label>
+            <div style="display:flex;gap:6px;">
+              <select id="sim-output-db" style="flex:1;" onchange="onOutputDbChange()"></select>
+              <button class="btn btn-ghost btn-sm" onclick="showNewDbInput()" title="Neue DB erstellen">+ Neu</button>
+            </div>
+            <input type="text" id="sim-output-db-new" placeholder="neuer_name.db" style="display:none;margin-top:6px;" oninput="updateNewDbName()">
+          </div>
+        </div>
+
+        <!-- Row 3: Finanzrechnung Toggle -->
+        <div class="toggle-row mb14" style="margin-bottom:10px;">
+          <div>
+            <div class="toggle-lbl">Finanzrechnung aktivieren</div>
+            <div class="toggle-desc">Simuliert Kapital, Gebühren, Lot-Größe und Drawdown</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="sim-fin-toggle" onchange="toggleFinancial()"><span class="toggle-sl"></span></label>
+        </div>
+
+        <!-- Financial fields (hidden by default) -->
+        <div id="sim-fin-fields" style="display:none;" class="form-grid mb14">
+          <div class="f-field">
+            <label>Startkapital (€)</label>
+            <input type="number" id="sim-capital" value="1000" min="100" step="100">
+          </div>
+          <div class="f-field">
+            <label>Risiko pro Trade (%)</label>
+            <input type="number" id="sim-risk" value="1.0" min="0.1" max="10" step="0.1">
+          </div>
+          <div class="f-field">
+            <label>Hebel</label>
+            <input type="number" id="sim-leverage" value="20" min="1" max="200" step="1">
+          </div>
+          <div class="f-field">
+            <label>EUR/USD Kurs</label>
+            <input type="number" id="sim-eurusd" value="1.08" min="0.8" max="1.5" step="0.01">
+          </div>
+          <div class="f-field" style="grid-column:span 2;display:flex;align-items:flex-end;gap:8px;">
+            <button class="btn btn-ghost btn-sm" onclick="loadFinancialDefaults()">Von Capital.com laden</button>
+            <span style="font-size:11px;color:var(--text-dim);" id="sim-fin-loaded"></span>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" style="flex:1;" id="sim-start-btn" onclick="startSim()">Simulation starten</button>
+          <button class="btn btn-ghost" id="sim-cancel-btn" onclick="cancelSim()" style="display:none">Abbrechen</button>
         </div>
       </div>
 
@@ -523,19 +612,40 @@ hr.div { border: none; border-top: 1px solid var(--border-dim); margin: 20px 0; 
         </div>
       </div>
 
-      <!-- Sim Chart (after run) -->
+      <!-- Sim Result -->
+      <div class="g2 mb14" id="sim-result-row" style="display:none;">
+        <div class="card">
+          <div class="card-hd"><span class="card-title">Ergebnis</span><span class="badge badge-d" id="sim-result-badge">—</span></div>
+          <div id="sim-results"></div>
+        </div>
+        <div class="card" id="sim-fin-result-card" style="display:none;">
+          <div class="card-hd"><span class="card-title">Finanzrechnung</span></div>
+          <div id="sim-fin-results"></div>
+        </div>
+      </div>
+
+      <!-- Sim Chart -->
       <div class="card mb14" id="sim-chart-card" style="display:none;">
-        <div class="card-hd"><span class="card-title">Equity Kurve (Simulation)</span><span class="badge badge-b" id="sim-chart-badge">—</span></div>
+        <div class="card-hd"><span class="card-title">Equity Kurve</span><span class="badge badge-b" id="sim-chart-badge">—</span></div>
         <div class="chart-wrap h300"><canvas id="simChart"></canvas></div>
       </div>
 
       <!-- Sim Trades -->
-      <div class="card mb20" id="sim-trades-card" style="display:none;">
+      <div class="card mb14" id="sim-trades-card" style="display:none;">
         <div class="card-hd">
           <span class="card-title">Simulations-Trades</span>
           <span class="badge badge-d" id="sim-trades-count">—</span>
         </div>
         <div id="sim-trades-body"></div>
+      </div>
+
+      <!-- Simulation Historie -->
+      <div class="card mb20">
+        <div class="card-hd">
+          <span class="card-title">Simulationshistorie</span>
+          <button class="btn btn-ghost btn-sm" onclick="loadSimHistory()">Aktualisieren</button>
+        </div>
+        <div id="sim-history-body"><div class="empty">Klicke "Aktualisieren" um frühere Simulationen zu laden.</div></div>
       </div>
 
       <hr class="div">
@@ -545,7 +655,13 @@ hr.div { border: none; border-top: 1px solid var(--border-dim); margin: 20px 0; 
 
       <div class="g2 mb14">
         <div class="card">
-          <div class="card-hd"><span class="card-title">Datenstatus</span><button class="btn btn-ghost btn-sm" onclick="loadHistoryStatus()">Aktualisieren</button></div>
+          <div class="card-hd">
+            <span class="card-title">Datenstatus</span>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <select id="hist-db-select" style="font-size:11px;padding:3px 6px;background:var(--bg3);border:1px solid var(--border-dim);color:var(--text);border-radius:4px;" onchange="loadHistoryStatus()"></select>
+              <button class="btn btn-ghost btn-sm" onclick="loadHistoryStatus()">Prüfen</button>
+            </div>
+          </div>
           <div id="hist-status-body"><div class="loading-row"><div class="spinner"></div>Lade Status...</div></div>
         </div>
         <div class="card">
@@ -553,29 +669,45 @@ hr.div { border: none; border-top: 1px solid var(--border-dim); margin: 20px 0; 
           <div class="form-grid-1 mb14">
             <div class="f-field">
               <label>Asset(s)</label>
-              <select id="fetch-asset">
-                <option value="">Alle Assets</option>
-                <option value="GOLD">GOLD</option>
-                <option value="SILVER">SILVER</option>
-                <option value="OIL_CRUDE">OIL_CRUDE</option>
-                <option value="NATURALGAS">NATURALGAS</option>
-              </select>
+              <div class="multi-select-wrap" id="fetch-asset-wrap">
+                <div class="multi-select-trigger" onclick="toggleFetchDropdown()">
+                  <span id="fetch-asset-label">Alle (4)</span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6,9 12,15 18,9"/></svg>
+                </div>
+                <div class="multi-select-menu" id="fetch-asset-menu">
+                  <label class="multi-opt"><input type="checkbox" id="fetch-asset-all" checked onchange="toggleAllFetchAssets(this)"> <span>Alle</span></label>
+                  <label class="multi-opt"><input type="checkbox" class="fetch-asset-cb" value="GOLD" checked onchange="updateFetchLabel()"> <span>GOLD</span></label>
+                  <label class="multi-opt"><input type="checkbox" class="fetch-asset-cb" value="SILVER" checked onchange="updateFetchLabel()"> <span>SILVER</span></label>
+                  <label class="multi-opt"><input type="checkbox" class="fetch-asset-cb" value="OIL_CRUDE" checked onchange="updateFetchLabel()"> <span>OIL_CRUDE</span></label>
+                  <label class="multi-opt"><input type="checkbox" class="fetch-asset-cb" value="NATURALGAS" checked onchange="updateFetchLabel()"> <span>NATURALGAS</span></label>
+                </div>
+              </div>
             </div>
             <div class="f-field"><label>Von Datum</label><input type="date" id="fetch-start"></div>
-            <div class="f-field"><label>Bis Datum</label><input type="date" id="fetch-end"></div>
+            <div class="f-field"><label>Bis Datum (Wochenenden werden automatisch übersprungen)</label><input type="date" id="fetch-end"></div>
           </div>
           <button class="btn btn-primary" style="width:100%;" id="fetch-btn" onclick="startFetch()">Daten abrufen</button>
           <div id="fetch-progress" style="margin-top:10px;display:none;">
-            <div class="prog-bar mb14"><div class="prog-fill g" id="fetch-prog-bar" style="width:0%"></div></div>
+            <div class="prog-bar" style="margin-bottom:6px;"><div class="prog-fill g" id="fetch-prog-bar" style="width:0%"></div></div>
             <div style="font-size:11px;color:var(--text-dim);" id="fetch-prog-txt"></div>
           </div>
         </div>
       </div>
 
+      <!-- Log-Box mit Tabs -->
       <div class="card">
-        <div class="card-hd"><span class="card-title">Abruf-Log</span></div>
-        <div class="log-box" id="fetch-log"><span class="log-dim">— kein Log —</span></div>
+        <div class="card-hd" style="margin-bottom:0;">
+          <span class="card-title">Log</span>
+          <div style="display:flex;gap:0;">
+            <button class="tab active" id="log-tab-sim" onclick="switchLog('sim')">Simulation</button>
+            <button class="tab" id="log-tab-fetch" onclick="switchLog('fetch')">Daten-Abruf</button>
+          </div>
+        </div>
+        <div style="border-top:1px solid var(--border-dim);margin:10px -16px 10px;"></div>
+        <div class="log-box" id="log-box-sim"><span class="log-dim">— kein Log —</span></div>
+        <div class="log-box" id="log-box-fetch" style="display:none;"><span class="log-dim">— kein Log —</span></div>
       </div>
+
     </div><!-- /page-daten -->
 
     <!-- ═══ PAGE: EINSTELLUNGEN ═════════════════════════════ -->
@@ -632,7 +764,7 @@ function nav(el) {
   document.getElementById('topbarTitle').textContent = PAGE_TITLES[page];
   currentPage = page;
   if (page === 'trading') loadTradingPage();
-  if (page === 'daten')  loadDatenPage();
+  if (page === 'daten')  { loadDatenPage(); loadSimHistory(); }
   if (page === 'settings') loadSettings();
 }
 
@@ -1014,16 +1146,88 @@ function buildPLChart(closed) {
   renderPLChart(labels.map(fmt), values);
 }
 
+/* ─── MULTI-SELECT: ASSETS (SIM) ─────────────────────────── */
+function toggleAssetDropdown() {
+  document.getElementById('sim-asset-menu').classList.toggle('open');
+}
+function toggleAllAssets(cb) {
+  document.querySelectorAll('.sim-asset-cb').forEach(c => { c.checked = cb.checked; });
+  updateAssetLabel();
+}
+function updateAssetLabel() {
+  const all = document.querySelectorAll('.sim-asset-cb');
+  const checked = [...all].filter(c => c.checked);
+  document.getElementById('sim-asset-all').checked = checked.length === all.length;
+  document.getElementById('sim-asset-label').textContent =
+    checked.length === all.length ? `Alle (${all.length})` :
+    checked.length === 0 ? 'Keines' :
+    checked.map(c => c.value).join(', ');
+}
+function getSelectedSimAssets() {
+  const checked = [...document.querySelectorAll('.sim-asset-cb')].filter(c => c.checked);
+  return checked.length === 4 ? null : checked.map(c => c.value); // null = alle
+}
+document.addEventListener('click', e => {
+  const w = document.getElementById('sim-asset-wrap');
+  if (w && !w.contains(e.target)) document.getElementById('sim-asset-menu')?.classList.remove('open');
+  const fw = document.getElementById('fetch-asset-wrap');
+  if (fw && !fw.contains(e.target)) document.getElementById('fetch-asset-menu')?.classList.remove('open');
+});
+
+/* ─── MULTI-SELECT: ASSETS (FETCH) ──────────────────────── */
+function toggleFetchDropdown() {
+  document.getElementById('fetch-asset-menu').classList.toggle('open');
+}
+function toggleAllFetchAssets(cb) {
+  document.querySelectorAll('.fetch-asset-cb').forEach(c => { c.checked = cb.checked; });
+  updateFetchLabel();
+}
+function updateFetchLabel() {
+  const all = document.querySelectorAll('.fetch-asset-cb');
+  const checked = [...all].filter(c => c.checked);
+  document.getElementById('fetch-asset-all').checked = checked.length === all.length;
+  document.getElementById('fetch-asset-label').textContent =
+    checked.length === all.length ? `Alle (${all.length})` :
+    checked.length === 0 ? 'Keines' :
+    checked.map(c => c.value).join(', ');
+}
+function getSelectedFetchAssets() {
+  const checked = [...document.querySelectorAll('.fetch-asset-cb')].filter(c => c.checked);
+  return checked.length === 0 ? null : checked.length === 4 ? null : checked.map(c => c.value);
+}
+
+/* ─── LOG TABS ────────────────────────────────────────────── */
+let _activeLog = 'sim';
+function switchLog(which) {
+  _activeLog = which;
+  document.getElementById('log-box-sim').style.display   = which === 'sim' ? '' : 'none';
+  document.getElementById('log-box-fetch').style.display = which === 'fetch' ? '' : 'none';
+  document.getElementById('log-tab-sim').classList.toggle('active', which === 'sim');
+  document.getElementById('log-tab-fetch').classList.toggle('active', which === 'fetch');
+}
+const _simLog = [], _fetchLog = [];
+function addSimLog(type, msg) {
+  const ts = new Date().toLocaleTimeString('de-DE');
+  const cls = type === 'ok' ? 'log-ok' : type === 'err' ? 'log-err' : 'log-warn';
+  _simLog.unshift(`<div class="${cls}">[${ts}] ${msg}</div>`);
+  document.getElementById('log-box-sim').innerHTML = _simLog.slice(0,60).join('');
+}
+function addFetchLog(type, msg) {
+  const ts = new Date().toLocaleTimeString('de-DE');
+  const cls = type === 'ok' ? 'log-ok' : type === 'err' ? 'log-err' : 'log-warn';
+  _fetchLog.unshift(`<div class="${cls}">[${ts}] ${msg}</div>`);
+  document.getElementById('log-box-fetch').innerHTML = _fetchLog.slice(0,60).join('');
+}
+
 /* ─── DATEN PAGE ──────────────────────────────────────────── */
 async function loadDatenPage() {
-  loadModels();
-  loadSimDBs();
-  loadHistoryStatus();
-  // Set default dates
   const today = new Date().toISOString().slice(0,10);
   const monthAgo = new Date(Date.now() - 30*864e5).toISOString().slice(0,10);
   document.getElementById('fetch-start').value = monthAgo;
   document.getElementById('fetch-end').value = today;
+  await loadModels();
+  await loadAllSimDBs();
+  loadHistoryStatus();
 }
 
 async function loadModels() {
@@ -1033,20 +1237,73 @@ async function loadModels() {
     sel.innerHTML = d.models.length
       ? d.models.map(m => `<option value="${m.path}">${m.name}</option>`).join('')
       : '<option value="">Kein Modell gefunden</option>';
-  } catch { document.getElementById('sim-model').innerHTML = '<option>Fehler</option>'; }
+  } catch { document.getElementById('sim-model').innerHTML = '<option value="">Fehler beim Laden</option>'; }
 }
 
-async function loadSimDBs() {
+let _allDbs = [];
+async function loadAllSimDBs() {
   try {
     const d = await apiFetch('/api/sim-databases');
-    const sel = document.getElementById('sim-db');
-    sel.innerHTML = d.databases
-      .map(db => `<option value="${db.name}" ${db.name === d.default ? 'selected':''} >${db.name} (${db.size_kb} KB)</option>`)
-      .join('');
-    if (!d.databases.length) sel.innerHTML = '<option value="simLastCharts.db">simLastCharts.db</option>';
-  } catch { document.getElementById('sim-db').innerHTML = '<option value="simLastCharts.db">simLastCharts.db</option>'; }
+    _allDbs = d.databases || [];
+    const defaultDb = d.default || 'simLastCharts.db';
+
+    const opts = _allDbs.map(db =>
+      `<option value="${db.name}" ${db.name===defaultDb?'selected':''}>${db.name} (${db.size_kb} KB)</option>`
+    ).join('');
+    const fallback = `<option value="simLastCharts.db">simLastCharts.db</option>`;
+
+    const inputEl  = document.getElementById('sim-input-db');
+    const outputEl = document.getElementById('sim-output-db');
+    inputEl.innerHTML  = opts || fallback;
+    outputEl.innerHTML = opts || fallback;
+
+    // Populate history DB select
+    const histSel = document.getElementById('hist-db-select');
+    if (histSel) {
+      histSel.innerHTML = _allDbs.map(db =>
+        `<option value="${db.name}" ${db.name===defaultDb?'selected':''}>${db.name}</option>`
+      ).join('') || fallback;
+    }
+  } catch {
+    const fallback = '<option value="simLastCharts.db">simLastCharts.db</option>';
+    document.getElementById('sim-input-db').innerHTML  = fallback;
+    document.getElementById('sim-output-db').innerHTML = fallback;
+  }
 }
 
+function onInputDbChange() { /* future: show candle count for selected db */ }
+function onOutputDbChange() {
+  // hide new-db input if user picks existing
+  const newInput = document.getElementById('sim-output-db-new');
+  newInput.style.display = 'none';
+}
+function showNewDbInput() {
+  const el = document.getElementById('sim-output-db-new');
+  el.style.display = el.style.display === 'none' ? '' : 'none';
+  if (el.style.display !== 'none') el.focus();
+}
+function updateNewDbName() { /* name read at startSim time */ }
+
+/* ─── FINANCIAL DEFAULTS ──────────────────────────────────── */
+function toggleFinancial() {
+  const on = document.getElementById('sim-fin-toggle').checked;
+  document.getElementById('sim-fin-fields').style.display = on ? '' : 'none';
+}
+async function loadFinancialDefaults() {
+  setText('sim-fin-loaded', 'Lade...');
+  try {
+    const d = await apiFetch('/api/financial-defaults');
+    if (d.balance) document.getElementById('sim-capital').value = d.balance.toFixed(2);
+    if (d.default_risk_pct) document.getElementById('sim-risk').value = d.default_risk_pct.toFixed(1);
+    if (d.default_leverage) document.getElementById('sim-leverage').value = d.default_leverage;
+    const mode = d.demo ? 'Demo' : 'Live';
+    setText('sim-fin-loaded', `Geladen (${mode}, ${d.currency||'EUR'})`);
+  } catch(e) {
+    setText('sim-fin-loaded', 'Fehler: ' + e.message);
+  }
+}
+
+/* ─── HISTORY STATUS ──────────────────────────────────────── */
 async function loadHistoryStatus() {
   const el = document.getElementById('hist-status-body');
   el.innerHTML = '<div class="loading-row"><div class="spinner"></div>Lade...</div>';
@@ -1061,7 +1318,7 @@ async function loadHistoryStatus() {
       const hasData = info && info.count > 0;
       const dotCls = hasData ? 'api-dot ok' : 'api-dot err';
       const detail = hasData
-        ? `${info.count.toLocaleString()} Candles · ${(info.from||'').slice(0,10)} – ${(info.to||'').slice(0,10)}`
+        ? `${info.count.toLocaleString()} Candles · ${(info.from||info.min_ts||'').slice(0,10)} – ${(info.to||info.max_ts||'').slice(0,10)}`
         : 'Keine Daten';
       return `<div class="api-row">
         <div class="${dotCls}"></div>
@@ -1078,32 +1335,58 @@ async function loadHistoryStatus() {
 let _simPollInterval = null;
 
 async function startSim() {
-  const assets = [...document.getElementById('sim-assets').selectedOptions].map(o => o.value);
-  const conf = parseInt(document.getElementById('sim-conf').value) || 8;
-  const start = document.getElementById('sim-start').value || null;
-  const end   = document.getElementById('sim-end').value || null;
-  const db    = document.getElementById('sim-db').value || null;
+  const assets = getSelectedSimAssets();
+  const conf   = parseInt(document.getElementById('sim-conf').value) || 8;
+  const start  = document.getElementById('sim-start').value || null;
+  const end    = document.getElementById('sim-end').value   || null;
 
-  if (!assets.length) { alert('Bitte mindestens ein Asset wählen.'); return; }
+  // Output DB: prefer "new" text input, else dropdown
+  const newDbRaw = document.getElementById('sim-output-db-new').value.trim();
+  const outputDb = newDbRaw || document.getElementById('sim-output-db').value || null;
+  const inputDb  = document.getElementById('sim-input-db').value || null;
+
+  // Financial
+  const finOn = document.getElementById('sim-fin-toggle').checked;
+  const body = {
+    assets, confidence_threshold: conf,
+    start_date: start, end_date: end,
+    input_db: inputDb, output_db: outputDb,
+  };
+  if (finOn) {
+    body.capital  = parseFloat(document.getElementById('sim-capital').value) || null;
+    body.risk_pct = (parseFloat(document.getElementById('sim-risk').value) || 1) / 100;
+    body.leverage = parseInt(document.getElementById('sim-leverage').value) || null;
+    body.eur_usd  = parseFloat(document.getElementById('sim-eurusd').value) || 1.08;
+  }
 
   try {
-    const d = await apiFetch('/api/run-timeline-sim', {
-      method: 'POST',
-      body: JSON.stringify({
-        assets, confidence_threshold: conf,
-        start_date: start, end_date: end, output_db: db
-      })
-    });
-    if (d.status === 'already_running') { alert('Simulation läuft bereits!'); return; }
+    const d = await apiFetch('/api/run-timeline-sim', { method: 'POST', body: JSON.stringify(body) });
+    if (d.status === 'already_running') {
+      addSimLog('warn', 'Simulation läuft bereits!');
+      switchLog('sim');
+      return;
+    }
+    addSimLog('ok', `Simulation gestartet · Assets: ${assets?.join(',')||'alle'} · Conf ≥ ${conf} · DB-In: ${inputDb||'default'} · DB-Out: ${outputDb||'default'}`);
+    if (finOn) addSimLog('ok', `Finanzrechnung: ${body.capital}€ · Risiko ${(body.risk_pct*100).toFixed(1)}% · Hebel ${body.leverage}`);
+    switchLog('sim');
     document.getElementById('sim-progress-wrap').style.display = '';
+    document.getElementById('sim-result-row').style.display = 'none';
+    document.getElementById('sim-chart-card').style.display = 'none';
+    document.getElementById('sim-trades-card').style.display = 'none';
     document.getElementById('sim-start-btn').style.display = 'none';
     document.getElementById('sim-cancel-btn').style.display = '';
     startSimPoll();
-  } catch(e) { alert('Sim-Start fehlgeschlagen: ' + e.message); }
+  } catch(e) {
+    addSimLog('err', 'Start fehlgeschlagen: ' + e.message);
+    switchLog('sim');
+  }
 }
 
 async function cancelSim() {
-  try { await apiFetch('/api/timeline-sim/cancel', { method: 'POST' }); } catch {}
+  try {
+    await apiFetch('/api/timeline-sim/cancel', { method: 'POST' });
+    addSimLog('warn', 'Abbruch angefordert...');
+  } catch {}
 }
 
 function startSimPoll() {
@@ -1115,65 +1398,108 @@ async function pollSimProgress() {
   try {
     const d = await apiFetch('/api/timeline-sim/progress');
     const p = d.progress || {};
-    const pct = p.pct || 0;
-
-    setText('sim-prog-pct', pct.toFixed(1) + '%');
-    document.getElementById('sim-prog-bar').style.width = pct + '%';
+    const pctVal = p.pct || 0;
+    setText('sim-prog-pct', pctVal.toFixed(1) + '%');
+    document.getElementById('sim-prog-bar').style.width = pctVal + '%';
     setText('sim-live-closed', p.closed_trades ?? 0);
-    setText('sim-live-open', p.open_trades ?? 0);
-    setText('sim-live-min', p.current_minute ?? 0);
-    setText('sim-live-total', p.total_minutes ?? 0);
+    setText('sim-live-open',   p.open_trades ?? 0);
+    setText('sim-live-min',    p.current_minute ?? 0);
+    setText('sim-live-total',  p.total_minutes ?? 0);
 
     if (!d.running && d.result) {
       clearInterval(_simPollInterval);
       _simPollInterval = null;
       document.getElementById('sim-start-btn').style.display = '';
       document.getElementById('sim-cancel-btn').style.display = 'none';
+      document.getElementById('sim-progress-wrap').style.display = 'none';
+      if (d.result.error) {
+        addSimLog('err', 'Simulation fehlgeschlagen: ' + d.result.error);
+      } else {
+        addSimLog('ok', `Simulation abgeschlossen: ${d.result.trades} Trades · WR ${(d.result.win_rate||0).toFixed(1)}%`);
+      }
       showSimResults(d.result);
+      loadAllSimDBs(); // refresh db list (new output db may have been created)
     }
   } catch(e) { console.error('pollSim', e); }
 }
 
 function showSimResults(r) {
+  document.getElementById('sim-result-row').style.display = '';
   if (r.error) {
     document.getElementById('sim-results').innerHTML = `<div class="notif err">${r.error}</div>`;
     return;
   }
   const wr = r.win_rate != null ? r.win_rate.toFixed(1) + '%' : '—';
-  const fin = r.financial || {};
-  setText('sim-result-badge', r.trades + ' Trades');
-  document.getElementById('sim-results').innerHTML = `
-    <div class="g2" style="gap:10px;margin-bottom:10px;">
-      <div><div class="stat-val ${(fin.total_return_pct||0)>=0?'':'red'}">${fin.total_return_pct!=null?pct(fin.total_return_pct):'—'}</div><div class="stat-lbl">Gesamtrendite</div></div>
-      <div><div class="stat-val">${r.trades??'—'}</div><div class="stat-lbl">Trades</div></div>
-      <div><div class="stat-val" style="color:var(--green)">${wr}</div><div class="stat-lbl">Win Rate</div></div>
-      <div><div class="stat-val" style="color:var(--red)">${fin.max_drawdown_pct!=null?pct(-Math.abs(fin.max_drawdown_pct)):'—'}</div><div class="stat-lbl">Max Drawdown</div></div>
-      ${fin.start_capital!=null?`<div><div class="stat-val">${eur(fin.start_capital)}</div><div class="stat-lbl">Startkapital</div></div>
-      <div><div class="stat-val" style="color:var(--green)">${eur(fin.end_capital)}</div><div class="stat-lbl">Endkapital</div></div>`:''}
-    </div>`;
+  setText('sim-result-badge', (r.trades??0) + ' Trades');
 
-  // Equity curve
-  if (fin.equity_curve && fin.equity_curve.length > 1) {
-    document.getElementById('sim-chart-card').style.display = '';
-    setText('sim-chart-badge', r.start_ts?.slice(0,10) + ' – ' + r.end_ts?.slice(0,10));
-    const step = Math.max(1, Math.floor(fin.equity_curve.length / 200));
-    const pts = fin.equity_curve.filter((_,i) => i % step === 0);
-    const vals = pts.map(p => typeof p === 'object' ? p.equity : p);
-    const lbls = pts.map((_, i) => i);
-    renderSimChart(lbls, vals);
+  // Per-asset
+  const pa = r.per_asset || {};
+  const paHtml = Object.entries(pa).map(([a,s]) =>
+    `<div style="background:var(--bg3);border-radius:var(--r);padding:8px 10px;border:1px solid var(--border-dim);">
+      <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);margin-bottom:4px;">${a}</div>
+      <div style="font-size:13px;">${s.trades} Trades</div>
+      <div style="font-size:11px;color:var(--text-dim);">WR: ${(s.win_rate||0).toFixed(0)}% · P/L: ${(s.pnl||0).toFixed(4)}</div>
+    </div>`
+  ).join('');
+
+  document.getElementById('sim-results').innerHTML = `
+    <div class="stats-row" style="margin-bottom:14px;">
+      <div class="stat-item"><div class="stat-val" style="color:var(--green)">${wr}</div><div class="stat-lbl">Win Rate</div></div>
+      <div class="stat-item"><div class="stat-val">${r.trades??'—'}</div><div class="stat-lbl">Trades</div></div>
+      <div class="stat-item"><div class="stat-val">${r.wins??'—'}W / ${r.losses??'—'}L</div><div class="stat-lbl">W/L</div></div>
+      <div class="stat-item"><div class="stat-val ${(r.total_pnl_points||0)>=0?'pp':'pn'}">${(r.total_pnl_points||0).toFixed(4)}</div><div class="stat-lbl">P/L Punkte</div></div>
+      <div class="stat-item"><div class="stat-val">${(r.avg_r_multiple||0).toFixed(2)}R</div><div class="stat-lbl">Ø R-Multiple</div></div>
+    </div>
+    ${paHtml?`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;">${paHtml}</div>`:''}`;
+
+  // Financial
+  const fin = r.financial || {};
+  if (fin.start_capital != null) {
+    document.getElementById('sim-fin-result-card').style.display = '';
+    const ret = fin.total_return_pct || 0;
+    document.getElementById('sim-fin-results').innerHTML = `
+      <div class="stats-row" style="flex-wrap:wrap;">
+        <div class="stat-item"><div class="stat-val">${eur(fin.start_capital)}</div><div class="stat-lbl">Startkapital</div></div>
+        <div class="stat-item"><div class="stat-val ${ret>=0?'pp':'pn'}">${eur(fin.end_capital)}</div><div class="stat-lbl">Endkapital</div></div>
+        <div class="stat-item"><div class="stat-val ${ret>=0?'pp':'pn'}">${pct(ret)}</div><div class="stat-lbl">Rendite</div></div>
+        <div class="stat-item"><div class="stat-val pn">${pct(-Math.abs(fin.max_drawdown_pct||0))}</div><div class="stat-lbl">Max Drawdown</div></div>
+      </div>
+      ${fin.margin_call?'<div class="notif err" style="margin-top:10px;">MARGIN CALL – Kapital aufgebraucht</div>':''}`;
   }
 
-  // Trade list
-  const trades = r.trade_list || [];
-  if (trades.length) {
+  // Equity curve from equity_curve or trade_list
+  const eq = fin.equity_curve || [];
+  const tl = r.trade_list || [];
+  if (eq.length > 1 || tl.length > 1) {
+    document.getElementById('sim-chart-card').style.display = '';
+    const label = `${(r.start_ts||'').slice(0,10)} – ${(r.end_ts||'').slice(0,10)}`;
+    setText('sim-chart-badge', label);
+    if (eq.length > 1) {
+      const step = Math.max(1, Math.floor(eq.length / 300));
+      const pts  = eq.filter((_,i) => i % step === 0);
+      const vals = pts.map(p => typeof p === 'object' ? (p.equity ?? p) : p);
+      renderSimChart(pts.map((_,i) => i), vals);
+    } else if (tl.length > 1) {
+      // Build cumulative PnL curve from trades
+      let cum = 0;
+      const curve = tl.map(t => { cum += (t.pnl||0); return cum; });
+      renderSimChart(tl.map((_,i) => i), curve);
+    }
+  }
+
+  // Trade table
+  if (tl.length) {
     document.getElementById('sim-trades-card').style.display = '';
-    setText('sim-trades-count', trades.length + ' Trades');
+    setText('sim-trades-count', tl.length + ' Trades');
     document.getElementById('sim-trades-body').innerHTML = `
+      <div style="overflow-x:auto;">
       <table class="tbl"><thead><tr>
-        <th>Zeit</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
-        <th>Ausstieg</th><th>PnL Pkt.</th><th>R</th><th>Status</th>
+        <th>Datum</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
+        <th>Ausstieg</th><th>PnL Pkt.</th><th>R</th>
+        ${tl[0]?.netto_pnl_eur!=null?'<th>Netto €</th>':''}
+        <th>Status</th>
       </tr></thead><tbody>
-      ${trades.slice(0,30).map(t => `<tr>
+      ${tl.slice(0,50).map(t => `<tr>
         <td>${ts2date(t.entry_ts)}</td>
         <td>${t.asset}</td>
         <td class="${t.direction==='BUY'||t.direction==='long'?'cl':'cs'}">${t.direction==='BUY'||t.direction==='long'?'▲ LONG':'▼ SHORT'}</td>
@@ -1181,34 +1507,90 @@ function showSimResults(r) {
         <td>${t.exit_price?.toFixed(2)??'—'}</td>
         <td class="${(t.pnl||0)>=0?'pp':'pn'}">${t.pnl!=null?t.pnl.toFixed(4):'—'}</td>
         <td class="${(t.r_multiple||0)>=0?'pp':'pn'}">${t.r_multiple!=null?t.r_multiple.toFixed(2)+'R':'—'}</td>
+        ${t.netto_pnl_eur!=null?`<td class="${t.netto_pnl_eur>=0?'pp':'pn'}">${eur(t.netto_pnl_eur)}</td>`:''}
         <td style="font-size:10px;color:var(--text-dim)">${t.status}</td>
       </tr>`).join('')}
-      </tbody></table>`;
+      </tbody></table></div>
+      ${tl.length>50?`<div style="text-align:center;padding:8px;font-size:11px;color:var(--text-dim)">... ${tl.length-50} weitere Trades</div>`:''}`;
+  }
+}
+
+/* ─── SIMULATION HISTORY ──────────────────────────────────── */
+async function loadSimHistory() {
+  const el = document.getElementById('sim-history-body');
+  el.innerHTML = '<div class="loading-row"><div class="spinner"></div>Lade Historie...</div>';
+  try {
+    const d = await apiFetch('/api/sim-history?limit=30');
+    const runs = d.runs || [];
+    if (!runs.length) { el.innerHTML = '<div class="empty">Keine Simulationen bisher.</div>'; return; }
+    el.innerHTML = runs.map(r => {
+      const statusCls = r.status==='completed' ? 'badge-g' : r.status==='cancelled' ? 'badge-y' : 'badge-r';
+      const statusTxt = r.status==='completed' ? 'OK' : r.status==='cancelled' ? 'STOP' : 'ERR';
+      const assets = (r.assets||[]).join(', ') || 'alle';
+      const fin = r.start_capital != null
+        ? `${eur(r.start_capital)} → ${eur(r.end_capital)} (${(r.total_return_pct||0).toFixed(1)}%)`
+        : '';
+      const canLoad = r.status === 'completed' && r.trades > 0;
+      return `<div class="hist-row">
+        <span class="hist-run-id">#${r.id}</span>
+        <div class="hist-meta">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
+            <span class="badge ${statusCls}">${statusTxt}</span>
+            <span style="font-size:12px;">${(r.run_at||'').slice(0,16)}</span>
+            <span style="font-size:11px;color:var(--text-dim);">${r.model_name||''}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-dim);">${assets} · Conf ≥ ${r.confidence_threshold||'—'} · ${r.trades||0} Trades · WR ${(r.win_rate||0).toFixed(1)}% ${fin?'· '+fin:''}</div>
+        </div>
+        ${canLoad ? `<button class="btn btn-ghost btn-sm" onclick="loadSimRun(${r.id}, event)">Laden</button>` : ''}
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = `<div class="notif err">Fehler: ${e.message}</div>`;
+  }
+}
+
+async function loadSimRun(runId, evt) {
+  evt.stopPropagation();
+  const btn = evt.target;
+  btn.textContent = '…'; btn.disabled = true;
+  try {
+    const d = await apiFetch(`/api/sim-history/${runId}/load`);
+    if (d.error) { alert('Fehler: ' + d.error); return; }
+    addSimLog('ok', `Historischen Run #${runId} geladen`);
+    switchLog('sim');
+    showSimResults(d);
+  } catch(e) {
+    alert('Laden fehlgeschlagen: ' + e.message);
+  } finally {
+    btn.textContent = 'Laden'; btn.disabled = false;
   }
 }
 
 /* ─── HISTORY FETCH ───────────────────────────────────────── */
 let _fetchPollInterval = null;
-const _fetchLog = [];
 
 async function startFetch() {
-  const asset = document.getElementById('fetch-asset').value;
-  const start = document.getElementById('fetch-start').value;
-  const end   = document.getElementById('fetch-end').value;
+  const assets = getSelectedFetchAssets();
+  const start  = document.getElementById('fetch-start').value;
+  const end    = document.getElementById('fetch-end').value;
   if (!start || !end) { alert('Bitte Start- und Enddatum angeben.'); return; }
 
   const body = { start_date: start, end_date: end };
-  if (asset) body.assets = [asset];
+  if (assets) body.assets = assets;
 
   try {
     const d = await apiFetch('/api/fetch-history', { method: 'POST', body: JSON.stringify(body) });
-    if (d.status === 'already_running') { alert('Abruf läuft bereits!'); return; }
-    addFetchLog('ok', `Download gestartet (${start} – ${end})`);
+    if (d.status === 'already_running') {
+      addFetchLog('warn', 'Abruf läuft bereits!'); switchLog('fetch'); return;
+    }
+    addFetchLog('ok', `Download gestartet · ${start} – ${end} · Assets: ${assets?.join(',')||'alle'} · Wochenenden werden übersprungen`);
+    switchLog('fetch');
     document.getElementById('fetch-progress').style.display = '';
     document.getElementById('fetch-btn').disabled = true;
     startFetchPoll();
   } catch(e) {
     addFetchLog('err', 'Start fehlgeschlagen: ' + e.message);
+    switchLog('fetch');
   }
 }
 
@@ -1222,8 +1604,8 @@ async function pollFetchProgress() {
     const d = await apiFetch('/api/fetch-history/progress');
     const p = d.progress || {};
     if (p.asset) {
-      const pct = p.total_chunks ? Math.round(p.chunk / p.total_chunks * 100) : 0;
-      document.getElementById('fetch-prog-bar').style.width = pct + '%';
+      const pctVal = p.total_chunks ? Math.round(p.chunk / p.total_chunks * 100) : 0;
+      document.getElementById('fetch-prog-bar').style.width = pctVal + '%';
       document.getElementById('fetch-prog-txt').textContent =
         `${p.asset}: Chunk ${p.chunk}/${p.total_chunks} · ${p.new_bars} neue Candles`;
     }
@@ -1233,18 +1615,18 @@ async function pollFetchProgress() {
       document.getElementById('fetch-btn').disabled = false;
       const res = d.result;
       if (res.error) { addFetchLog('err', res.error); return; }
-      Object.entries(res).forEach(([asset, info]) => {
-        addFetchLog('ok', `${asset}: ${info.new_bars ?? info} neue Candles gespeichert`);
-      });
+      if (Array.isArray(res)) {
+        res.forEach(info => addFetchLog('ok', `${info.asset}: ${info.fetched} neue Candles · ${info.errors} Fehler`));
+      } else {
+        Object.entries(res).forEach(([asset, info]) => {
+          const bars = typeof info === 'object' ? (info.fetched??info.new_bars??info) : info;
+          addFetchLog('ok', `${asset}: ${bars} neue Candles gespeichert`);
+        });
+      }
       loadHistoryStatus();
+      loadAllSimDBs();
     }
   } catch(e) { console.error('pollFetch', e); }
-}
-
-function addFetchLog(type, msg) {
-  const ts = new Date().toLocaleTimeString('de-DE');
-  _fetchLog.unshift(`<div class="log-${type==='ok'?'ok':type==='err'?'err':'warn'}">[${ts}] ${msg}</div>`);
-  document.getElementById('fetch-log').innerHTML = _fetchLog.slice(0,50).join('');
 }
 
 /* ─── SETTINGS PAGE ───────────────────────────────────────── */
