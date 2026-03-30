@@ -11,6 +11,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./models:/app/models
+      - ./static:/app/static
       - ./.env:/app/.env
       - /etc/localtime:/etc/localtime:ro
     environment:
@@ -20,33 +21,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-  dashboard:
-    build: .
-    container_name: trading-dashboard
-    restart: unless-stopped
-    env_file: .env
-    command: >
-      python -m streamlit run dashboard.py
-      --server.port=8501
-      --server.address=0.0.0.0
-      --server.headless=true
-      --server.enableWebsocketCompression=false
-      --server.enableCORS=false
-      --server.enableXsrfProtection=false
-    ports:
-      - "8501:8501"
-    volumes:
-      - ./data:/app/data
-      - /etc/localtime:/etc/localtime:ro
-    environment:
-      - TZ=Europe/Berlin
-      - DATA_DIR=/app/data
-      - BOT_API_URL=http://trading-bot:8502
-    depends_on:
-      - trading-bot
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "5m"
-        max-file: "2"

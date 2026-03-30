@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(wc -l \"/c/Users/Johannes Kley/Documents/Temp/TradingBot\"/src/*.py)",
-      "Bash(.venv/Scripts/pip install:*)"
-    ]
-  }
-}

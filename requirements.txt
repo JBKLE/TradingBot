@@ -1,6 +1,4 @@
-# Claude API (KI-Simulationsanalyse)
 anthropic>=0.40.0
-
 httpx>=0.27.0
 torch>=2.0.0
 numpy>=1.24.0

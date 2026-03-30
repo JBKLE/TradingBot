@@ -1,0 +1,1382 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TradingBot Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  /* ─── RESET & BASE ─────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --green:       #00ff41;
+    --green-dim:   #00c032;
+    --green-glow:  rgba(0,255,65,0.18);
+    --red:         #ff3b3b;
+    --yellow:      #f5c542;
+    --blue:        #3b82f6;
+    --bg:          #080b0d;
+    --bg2:         #0d1117;
+    --bg3:         #111820;
+    --bg4:         #18232e;
+    --border:      rgba(0,255,65,0.15);
+    --border-dim:  rgba(255,255,255,0.06);
+    --text:        #c9d1d9;
+    --text-dim:    #6e7681;
+    --sidebar-w:   240px;
+    --sidebar-collapsed: 56px;
+    --header-h:    52px;
+    --radius:      8px;
+    --transition:  0.22s ease;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    overflow: hidden;
+  }
+
+  /* ─── LAYOUT ────────────────────────────────────────────── */
+  .app { display: flex; height: 100vh; }
+
+  /* ─── SIDEBAR ───────────────────────────────────────────── */
+  .sidebar {
+    width: var(--sidebar-w);
+    min-width: var(--sidebar-w);
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    transition: width var(--transition), min-width var(--transition);
+    overflow: hidden;
+    z-index: 100;
+    position: relative;
+  }
+  .sidebar.collapsed {
+    width: var(--sidebar-collapsed);
+    min-width: var(--sidebar-collapsed);
+  }
+
+  .sidebar-header {
+    height: var(--header-h);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--border);
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .sidebar-logo {
+    width: 32px; height: 32px;
+    border-radius: 6px;
+    background: var(--green-glow);
+    border: 1px solid var(--green);
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Share Tech Mono', monospace;
+    color: var(--green);
+    font-size: 12px;
+    flex-shrink: 0;
+    letter-spacing: -1px;
+  }
+  .sidebar-title {
+    font-family: 'Share Tech Mono', monospace;
+    color: var(--green);
+    font-size: 13px;
+    white-space: nowrap;
+    opacity: 1;
+    transition: opacity var(--transition);
+    overflow: hidden;
+  }
+  .sidebar.collapsed .sidebar-title { opacity: 0; }
+
+  .sidebar-toggle {
+    margin-left: auto;
+    background: none; border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: color var(--transition), background var(--transition);
+  }
+  .sidebar-toggle:hover { color: var(--green); background: var(--green-glow); }
+  .sidebar-toggle svg { transition: transform 0.3s ease; }
+  .sidebar.collapsed .sidebar-toggle svg { transform: rotate(180deg); }
+
+  .sidebar-nav { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px 0; }
+  .sidebar-nav::-webkit-scrollbar { width: 3px; }
+  .sidebar-nav::-webkit-scrollbar-thumb { background: var(--border); }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    cursor: pointer;
+    border-radius: 0;
+    color: var(--text-dim);
+    transition: all var(--transition);
+    white-space: nowrap;
+    position: relative;
+    border-left: 3px solid transparent;
+    user-select: none;
+  }
+  .nav-item:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+  .nav-item.active {
+    color: var(--green);
+    background: var(--green-glow);
+    border-left-color: var(--green);
+  }
+  .nav-icon {
+    width: 20px; height: 20px;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .nav-label {
+    font-size: 13px;
+    font-weight: 500;
+    opacity: 1;
+    transition: opacity var(--transition);
+    overflow: hidden;
+  }
+  .sidebar.collapsed .nav-label { opacity: 0; }
+
+  /* Tooltip for collapsed state */
+  .nav-item::after {
+    content: attr(data-label);
+    position: absolute;
+    left: calc(var(--sidebar-collapsed) + 6px);
+    background: var(--bg4);
+    color: var(--text);
+    padding: 5px 10px;
+    border-radius: var(--radius);
+    font-size: 12px;
+    white-space: nowrap;
+    border: 1px solid var(--border-dim);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.15s;
+    z-index: 999;
+  }
+  .sidebar.collapsed .nav-item:hover::after { opacity: 1; }
+
+  .sidebar-footer {
+    padding: 10px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .bot-status-pill {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 6px 10px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
+  .status-dot.stopped { background: var(--text-dim); }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+  .status-text { font-size: 11px; color: var(--text-dim); overflow: hidden; transition: opacity var(--transition); }
+  .sidebar.collapsed .status-text { opacity: 0; }
+
+  /* ─── MAIN CONTENT ──────────────────────────────────────── */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ─── TOP BAR ───────────────────────────────────────────── */
+  .topbar {
+    height: var(--header-h);
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  .topbar-title {
+    font-family: 'Share Tech Mono', monospace;
+    color: var(--green);
+    font-size: 14px;
+    flex: 1;
+  }
+  .topbar-actions { display: flex; align-items: center; gap: 8px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px;
+    border-radius: var(--radius);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: all var(--transition);
+    font-family: inherit;
+  }
+  .btn-primary {
+    background: var(--green);
+    color: #000;
+    border-color: var(--green);
+  }
+  .btn-primary:hover { background: var(--green-dim); }
+  .btn-danger {
+    background: transparent;
+    color: var(--red);
+    border-color: var(--red);
+  }
+  .btn-danger:hover { background: rgba(255,59,59,0.1); }
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-dim);
+    border-color: var(--border-dim);
+  }
+  .btn-ghost:hover { color: var(--text); border-color: var(--border); }
+
+  /* ─── PAGE CONTENT ──────────────────────────────────────── */
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 20px;
+  }
+  .content::-webkit-scrollbar { width: 4px; }
+  .content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* ─── GRID HELPERS ──────────────────────────────────────── */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .grid-col-2 { grid-column: span 2; }
+  .grid-col-3 { grid-column: span 3; }
+
+  /* ─── CARD ──────────────────────────────────────────────── */
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .card-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .card-title {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .card-badge {
+    font-size: 10px; padding: 2px 7px; border-radius: 10px;
+    border: 1px solid; font-family: 'Share Tech Mono', monospace;
+  }
+  .badge-green { color: var(--green); border-color: var(--green); background: var(--green-glow); }
+  .badge-red { color: var(--red); border-color: var(--red); background: rgba(255,59,59,0.1); }
+  .badge-yellow { color: var(--yellow); border-color: var(--yellow); background: rgba(245,197,66,0.1); }
+  .badge-blue { color: var(--blue); border-color: var(--blue); background: rgba(59,130,246,0.1); }
+  .badge-dim { color: var(--text-dim); border-color: var(--border-dim); background: transparent; }
+
+  /* ─── KPI METRIC ────────────────────────────────────────── */
+  .kpi { }
+  .kpi-value {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 26px;
+    color: var(--green);
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+  .kpi-value.red { color: var(--red); }
+  .kpi-value.yellow { color: var(--yellow); }
+  .kpi-label { font-size: 11px; color: var(--text-dim); }
+  .kpi-delta { font-size: 11px; margin-top: 3px; }
+  .kpi-delta.pos { color: var(--green); }
+  .kpi-delta.neg { color: var(--red); }
+
+  /* ─── API STATUS ────────────────────────────────────────── */
+  .api-list { display: flex; flex-direction: column; gap: 8px; }
+  .api-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px;
+    background: var(--bg3);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-dim);
+  }
+  .api-row .api-name { flex: 1; font-size: 12px; }
+  .api-latency { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--text-dim); }
+  .api-indicator { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .api-indicator.ok { background: var(--green); box-shadow: 0 0 5px var(--green); }
+  .api-indicator.warn { background: var(--yellow); box-shadow: 0 0 5px var(--yellow); }
+  .api-indicator.err { background: var(--red); box-shadow: 0 0 5px var(--red); }
+  .api-check-btn {
+    font-size: 10px; padding: 3px 8px; border-radius: 4px;
+    background: none; border: 1px solid var(--border-dim);
+    color: var(--text-dim); cursor: pointer;
+    transition: all var(--transition);
+    font-family: inherit;
+  }
+  .api-check-btn:hover { border-color: var(--green); color: var(--green); }
+
+  /* ─── ASSET SIGNAL CARD ─────────────────────────────────── */
+  .signal-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .signal-card {
+    background: var(--bg3);
+    border: 1px solid var(--border-dim);
+    border-radius: var(--radius);
+    padding: 12px;
+    transition: border-color var(--transition);
+  }
+  .signal-card:hover { border-color: var(--border); }
+  .signal-card.buy { border-top: 2px solid var(--green); }
+  .signal-card.sell { border-top: 2px solid var(--red); }
+  .signal-card.hold { border-top: 2px solid var(--text-dim); }
+  .sc-asset { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--text); margin-bottom: 6px; }
+  .sc-signal { font-size: 10px; font-weight: 600; letter-spacing: 0.1em; }
+  .sc-signal.buy { color: var(--green); }
+  .sc-signal.sell { color: var(--red); }
+  .sc-signal.hold { color: var(--text-dim); }
+  .sc-confidence {
+    margin-top: 6px;
+    height: 3px; background: var(--bg4); border-radius: 2px; overflow: hidden;
+  }
+  .sc-confidence-fill { height: 100%; border-radius: 2px; }
+  .sc-confidence-fill.buy { background: var(--green); }
+  .sc-confidence-fill.sell { background: var(--red); }
+  .sc-meta { font-size: 10px; color: var(--text-dim); margin-top: 4px; display: flex; justify-content: space-between; }
+
+  /* ─── TRADE TABLE ───────────────────────────────────────── */
+  .trade-table { width: 100%; border-collapse: collapse; }
+  .trade-table th {
+    font-size: 10px; text-align: left; padding: 6px 10px;
+    color: var(--text-dim); border-bottom: 1px solid var(--border-dim);
+    font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .trade-table td {
+    padding: 9px 10px; font-size: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    font-family: 'Share Tech Mono', monospace;
+  }
+  .trade-table tr:last-child td { border-bottom: none; }
+  .trade-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .dir-long { color: var(--green); }
+  .dir-short { color: var(--red); }
+  .pl-pos { color: var(--green); }
+  .pl-neg { color: var(--red); }
+
+  /* ─── CHART CONTAINER ───────────────────────────────────── */
+  .chart-wrap { position: relative; height: 220px; }
+  .chart-wrap.tall { height: 300px; }
+  .chart-wrap.short { height: 140px; }
+
+  /* ─── SETTINGS FORM ─────────────────────────────────────── */
+  .settings-group { margin-bottom: 24px; }
+  .settings-group-title {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px; color: var(--green);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .form-field { display: flex; flex-direction: column; gap: 5px; }
+  .form-field label { font-size: 11px; color: var(--text-dim); }
+  .form-field input, .form-field select {
+    background: var(--bg3); border: 1px solid var(--border-dim);
+    color: var(--text); border-radius: var(--radius);
+    padding: 7px 10px; font-size: 13px; font-family: 'Share Tech Mono', monospace;
+    outline: none; transition: border-color var(--transition);
+  }
+  .form-field input:focus, .form-field select:focus { border-color: var(--green); }
+  .form-field input[type="range"] {
+    padding: 0; height: 4px; cursor: pointer;
+    accent-color: var(--green); background: var(--bg4);
+  }
+  .toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 12px;
+    background: var(--bg3); border-radius: var(--radius);
+    border: 1px solid var(--border-dim);
+    margin-bottom: 8px;
+  }
+  .toggle-label { font-size: 12px; }
+  .toggle-desc { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+  .toggle {
+    position: relative; width: 36px; height: 20px;
+    flex-shrink: 0;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute; inset: 0;
+    background: var(--bg4); border: 1px solid var(--border-dim);
+    border-radius: 20px; cursor: pointer; transition: background 0.2s;
+  }
+  .toggle-slider::before {
+    content: ''; position: absolute;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--text-dim); top: 2px; left: 2px;
+    transition: transform 0.2s, background 0.2s;
+  }
+  .toggle input:checked + .toggle-slider { background: var(--green-glow); border-color: var(--green); }
+  .toggle input:checked + .toggle-slider::before { transform: translateX(16px); background: var(--green); }
+
+  /* ─── TABS ──────────────────────────────────────────────── */
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border-dim); margin-bottom: 16px; }
+  .tab {
+    padding: 8px 16px; font-size: 12px; cursor: pointer;
+    color: var(--text-dim); border-bottom: 2px solid transparent;
+    transition: all var(--transition); user-select: none;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--green); border-bottom-color: var(--green); }
+
+  /* ─── DIVIDER ───────────────────────────────────────────── */
+  .divider { border: none; border-top: 1px solid var(--border-dim); margin: 20px 0; }
+  .section-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 12px;
+  }
+
+  /* ─── LOG ───────────────────────────────────────────────── */
+  .log-box {
+    background: var(--bg);
+    border: 1px solid var(--border-dim);
+    border-radius: var(--radius);
+    padding: 12px;
+    height: 160px;
+    overflow-y: auto;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    line-height: 1.7;
+  }
+  .log-box::-webkit-scrollbar { width: 3px; }
+  .log-box::-webkit-scrollbar-thumb { background: var(--border); }
+  .log-ok { color: var(--green); }
+  .log-warn { color: var(--yellow); }
+  .log-err { color: var(--red); }
+  .log-dim { color: var(--text-dim); }
+
+  /* ─── RESPONSIVE ────────────────────────────────────────── */
+  @media (max-width: 900px) {
+    .grid-4 { grid-template-columns: 1fr 1fr; }
+    .signal-cards { grid-template-columns: 1fr 1fr; }
+  }
+
+  /* ─── SECTION SPACING ───────────────────────────────────── */
+  .mb-4 { margin-bottom: 4px; }
+  .mb-8 { margin-bottom: 8px; }
+  .mb-14 { margin-bottom: 14px; }
+  .mb-20 { margin-bottom: 20px; }
+  .flex { display: flex; }
+  .flex-center { display: flex; align-items: center; }
+  .gap-8 { gap: 8px; }
+  .gap-14 { gap: 14px; }
+  .ml-auto { margin-left: auto; }
+
+  /* ─── PROGRESS BAR ──────────────────────────────────────── */
+  .progress-bar { height: 4px; background: var(--bg4); border-radius: 2px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+  .progress-fill.green { background: var(--green); }
+  .progress-fill.red { background: var(--red); }
+
+  /* ─── NOTIF BANNER ──────────────────────────────────────── */
+  .notif-banner {
+    background: var(--bg3); border: 1px solid var(--yellow);
+    border-radius: var(--radius); padding: 10px 14px;
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 14px; font-size: 12px; color: var(--yellow);
+  }
+
+  /* ─── EMPTY STATE ───────────────────────────────────────── */
+  .empty-state {
+    text-align: center; padding: 40px; color: var(--text-dim);
+    font-size: 13px;
+  }
+  .empty-state .empty-icon { font-size: 32px; margin-bottom: 10px; }
+
+  /* ─── SMALL STATS ROW ───────────────────────────────────── */
+  .stats-row { display: flex; gap: 0; }
+  .stat-item {
+    flex: 1; padding: 10px 14px;
+    border-right: 1px solid var(--border-dim);
+  }
+  .stat-item:last-child { border-right: none; }
+  .stat-val { font-family: 'Share Tech Mono', monospace; font-size: 15px; }
+  .stat-lbl { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ═══════════════════════════════════════════════════════════
+       SIDEBAR
+  ══════════════════════════════════════════════════════════════ -->
+  <nav class="sidebar" id="sidebar">
+    <!-- Header -->
+    <div class="sidebar-header">
+      <div class="sidebar-logo">TB</div>
+      <span class="sidebar-title">TradingBot</span>
+      <button class="sidebar-toggle" onclick="toggleSidebar()" title="Sidebar ein-/ausklappen">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="15,18 9,12 15,6"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Navigation -->
+    <div class="sidebar-nav">
+      <div class="nav-item active" data-label="Dashboard" onclick="showPage('dashboard', this)">
+        <span class="nav-icon">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+            <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+          </svg>
+        </span>
+        <span class="nav-label">Dashboard</span>
+      </div>
+      <div class="nav-item" data-label="Trading" onclick="showPage('trading', this)">
+        <span class="nav-icon">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <polyline points="22,7 13.5,15.5 8.5,10.5 2,17"/><polyline points="16,7 22,7 22,13"/>
+          </svg>
+        </span>
+        <span class="nav-label">Trading</span>
+      </div>
+      <div class="nav-item" data-label="Daten" onclick="showPage('daten', this)">
+        <span class="nav-icon">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+          </svg>
+        </span>
+        <span class="nav-label">Simulation & Daten</span>
+      </div>
+      <div class="nav-item" data-label="Einstellungen" onclick="showPage('settings', this)">
+        <span class="nav-icon">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </span>
+        <span class="nav-label">Bot Einstellungen</span>
+      </div>
+    </div>
+
+    <!-- Footer: Bot Status -->
+    <div class="sidebar-footer">
+      <div class="bot-status-pill">
+        <div class="status-dot running" id="sidebarStatusDot"></div>
+        <span class="status-text" id="sidebarStatusText">Bot läuft · v2.1</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       MAIN AREA
+  ══════════════════════════════════════════════════════════════ -->
+  <div class="main">
+
+    <!-- TOP BAR -->
+    <div class="topbar">
+      <span class="topbar-title" id="topbarTitle">Dashboard</span>
+      <div class="topbar-actions">
+        <span style="font-size:11px;color:var(--text-dim);">Letztes Update: 09:42:17</span>
+        <button class="btn btn-danger" id="stopBotBtn" onclick="toggleBot()">Bot stoppen</button>
+      </div>
+    </div>
+
+    <!-- PAGES -->
+    <div class="content">
+
+      <!-- ══════════════════════════════════════════════════════
+           PAGE: DASHBOARD (Startseite)
+      ══════════════════════════════════════════════════════════ -->
+      <div class="page active" id="page-dashboard">
+
+        <!-- KPI Row -->
+        <div class="grid-4 mb-14">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Kontostand</span>
+              <span class="card-badge badge-green">LIVE</span>
+            </div>
+            <div class="kpi">
+              <div class="kpi-value">€ 12.847,32</div>
+              <div class="kpi-delta pos">▲ +€ 347,32 heute</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">Equity</span></div>
+            <div class="kpi">
+              <div class="kpi-value">€ 12.921,08</div>
+              <div class="kpi-delta pos">▲ +€ 73,76 unrealisiert</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">Gewinn / Monat</span></div>
+            <div class="kpi">
+              <div class="kpi-value">€ 1.204,11</div>
+              <div class="kpi-delta pos">▲ +10.3 % ggü. Vormonat</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">Offene Positionen</span></div>
+            <div class="kpi">
+              <div class="kpi-value" style="color:var(--blue)">2 / 4</div>
+              <div class="kpi-delta" style="color:var(--text-dim)">Max. 4 gleichzeitig</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Balance Chart + API Status -->
+        <div class="grid-2 mb-14" style="grid-template-columns: 2fr 1fr;">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Kontoverlauf</span>
+              <div style="display:flex;gap:6px;">
+                <span class="tab active" style="padding:3px 10px;font-size:11px;">7T</span>
+                <span class="tab" style="padding:3px 10px;font-size:11px;">30T</span>
+                <span class="tab" style="padding:3px 10px;font-size:11px;">Gesamt</span>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="balanceChart"></canvas>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">API Status</span>
+              <button class="api-check-btn" onclick="checkApis()">Alle prüfen</button>
+            </div>
+            <div class="api-list">
+              <div class="api-row">
+                <div class="api-indicator ok"></div>
+                <span class="api-name">Capital.com (Demo)</span>
+                <span class="api-latency">124 ms</span>
+              </div>
+              <div class="api-row">
+                <div class="api-indicator ok"></div>
+                <span class="api-name">Capital.com (Live)</span>
+                <span class="api-latency">138 ms</span>
+              </div>
+              <div class="api-row">
+                <div class="api-indicator ok"></div>
+                <span class="api-name">Claude AI</span>
+                <span class="api-latency">291 ms</span>
+              </div>
+              <div class="api-row">
+                <div class="api-indicator warn"></div>
+                <span class="api-name">ntfy.sh</span>
+                <span class="api-latency">602 ms</span>
+              </div>
+            </div>
+            <div style="margin-top:10px;font-size:10px;color:var(--text-dim);">
+              Geprüft beim Bot-Start · 09:00:03
+            </div>
+          </div>
+        </div>
+
+        <!-- Schnellübersicht Performance -->
+        <div class="card mb-14">
+          <div class="card-header"><span class="card-title">Performance Übersicht</span></div>
+          <div class="stats-row">
+            <div class="stat-item">
+              <div class="stat-val" style="color:var(--green)">68.4%</div>
+              <div class="stat-lbl">Win Rate (30T)</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-val">47</div>
+              <div class="stat-lbl">Trades (30T)</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-val" style="color:var(--green)">1.82</div>
+              <div class="stat-lbl">Profit Faktor</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-val" style="color:var(--red)">-2.1%</div>
+              <div class="stat-lbl">Max Drawdown</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-val" style="color:var(--green)">3</div>
+              <div class="stat-lbl">Aktueller Win-Streak</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-val">8.3 / 10</div>
+              <div class="stat-lbl">⌀ Konfidenz</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Aktuelle Signale (Mini) -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Aktuelle Signale</span>
+            <span class="card-badge badge-dim">Letzter Scan: 09:42:00</span>
+          </div>
+          <div class="signal-cards">
+            <div class="signal-card buy">
+              <div class="sc-asset">GOLD</div>
+              <div class="sc-signal buy">▲ BUY</div>
+              <div class="sc-confidence"><div class="sc-confidence-fill buy" style="width:90%"></div></div>
+              <div class="sc-meta"><span>Konfidenz</span><span>9.0 / 10</span></div>
+            </div>
+            <div class="signal-card hold">
+              <div class="sc-asset">SILBER</div>
+              <div class="sc-signal hold">— HOLD</div>
+              <div class="sc-confidence"><div class="sc-confidence-fill" style="width:45%;background:var(--text-dim)"></div></div>
+              <div class="sc-meta"><span>Konfidenz</span><span>4.5 / 10</span></div>
+            </div>
+            <div class="signal-card sell">
+              <div class="sc-asset">ROHÖL</div>
+              <div class="sc-signal sell">▼ SELL</div>
+              <div class="sc-confidence"><div class="sc-confidence-fill sell" style="width:82%"></div></div>
+              <div class="sc-meta"><span>Konfidenz</span><span>8.2 / 10</span></div>
+            </div>
+            <div class="signal-card hold">
+              <div class="sc-asset">ERDGAS</div>
+              <div class="sc-signal hold">— HOLD</div>
+              <div class="sc-confidence"><div class="sc-confidence-fill" style="width:30%;background:var(--text-dim)"></div></div>
+              <div class="sc-meta"><span>Konfidenz</span><span>3.0 / 10</span></div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /page-dashboard -->
+
+      <!-- ══════════════════════════════════════════════════════
+           PAGE: TRADING
+      ══════════════════════════════════════════════════════════ -->
+      <div class="page" id="page-trading">
+
+        <!-- Bot Control + KPIs -->
+        <div class="grid-4 mb-14">
+          <div class="card" style="background:var(--bg3);border-color:var(--green);">
+            <div class="card-header"><span class="card-title">Bot Status</span><span class="card-badge badge-green">AKTIV</span></div>
+            <div style="display:flex;gap:8px;margin-top:4px;">
+              <button class="btn btn-danger" style="flex:1;" onclick="toggleBot()">Stopp</button>
+              <button class="btn btn-ghost" style="flex:1;">Analyse</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">Tages-P/L</span></div>
+            <div class="kpi"><div class="kpi-value">+€ 347,32</div><div class="kpi-delta pos">▲ +2.78 %</div></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">Trades heute</span></div>
+            <div class="kpi"><div class="kpi-value" style="color:var(--blue)">7</div><div class="kpi-delta pos">5W / 2V</div></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">API Calls / h</span></div>
+            <div class="kpi">
+              <div class="kpi-value" style="color:var(--yellow)">287</div>
+              <div class="kpi-delta" style="color:var(--text-dim)">Limit: 1000</div>
+            </div>
+            <div class="progress-bar" style="margin-top:8px;">
+              <div class="progress-fill green" style="width:28.7%"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Offene Positionen -->
+        <div class="card mb-14">
+          <div class="card-header">
+            <span class="card-title">Offene Positionen</span>
+            <span class="card-badge badge-green">2 Aktiv</span>
+          </div>
+          <table class="trade-table">
+            <thead>
+              <tr>
+                <th>Asset</th><th>Richtung</th><th>Einstieg</th>
+                <th>Aktuell</th><th>SL</th><th>TP</th>
+                <th>Konfidenz</th><th>P/L</th><th>Aktion</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>GOLD</td>
+                <td class="dir-long">▲ LONG</td>
+                <td>2.318,40</td><td>2.334,20</td>
+                <td style="color:var(--red)">2.295,00</td>
+                <td style="color:var(--green)">2.360,00</td>
+                <td>9.0 / 10</td>
+                <td class="pl-pos">+€ 63,20</td>
+                <td><button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;">Schließen</button></td>
+              </tr>
+              <tr>
+                <td>ROHÖL</td>
+                <td class="dir-short">▼ SHORT</td>
+                <td>83,74</td><td>82,91</td>
+                <td style="color:var(--red)">85,20</td>
+                <td style="color:var(--green)">81,50</td>
+                <td>8.2 / 10</td>
+                <td class="pl-pos">+€ 10,56</td>
+                <td><button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;">Schließen</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Signale + P/L Chart -->
+        <div class="grid-2 mb-14">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Signale (Aktuell)</span>
+              <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;">Manuell auslösen</button>
+            </div>
+            <div class="signal-cards" style="grid-template-columns:1fr 1fr;">
+              <div class="signal-card buy">
+                <div class="sc-asset">GOLD</div>
+                <div class="sc-signal buy">▲ BUY</div>
+                <div class="sc-confidence"><div class="sc-confidence-fill buy" style="width:90%"></div></div>
+                <div class="sc-meta"><span>Conf.</span><span>9.0</span></div>
+              </div>
+              <div class="signal-card hold">
+                <div class="sc-asset">SILBER</div>
+                <div class="sc-signal hold">— HOLD</div>
+                <div class="sc-confidence"><div class="sc-confidence-fill" style="width:45%;background:var(--text-dim)"></div></div>
+                <div class="sc-meta"><span>Conf.</span><span>4.5</span></div>
+              </div>
+              <div class="signal-card sell">
+                <div class="sc-asset">ROHÖL</div>
+                <div class="sc-signal sell">▼ SELL</div>
+                <div class="sc-confidence"><div class="sc-confidence-fill sell" style="width:82%"></div></div>
+                <div class="sc-meta"><span>Conf.</span><span>8.2</span></div>
+              </div>
+              <div class="signal-card hold">
+                <div class="sc-asset">ERDGAS</div>
+                <div class="sc-signal hold">— HOLD</div>
+                <div class="sc-confidence"><div class="sc-confidence-fill" style="width:30%;background:var(--text-dim)"></div></div>
+                <div class="sc-meta"><span>Conf.</span><span>3.0</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">P/L Verlauf (7 Tage)</span></div>
+            <div class="chart-wrap">
+              <canvas id="plChart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Letzte abgeschlossene Trades -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Letzte Trades</span>
+            <span class="card-badge badge-dim">Letzte 10</span>
+          </div>
+          <table class="trade-table">
+            <thead>
+              <tr><th>Zeit</th><th>Asset</th><th>Richtung</th><th>Einstieg</th><th>Ausstieg</th><th>P/L €</th><th>P/L %</th><th>Review</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>09:31</td><td>SILBER</td><td class="dir-long">▲ LONG</td><td>27.43</td><td>27.81</td><td class="pl-pos">+€ 38.00</td><td class="pl-pos">+1.38%</td><td><button class="btn btn-ghost" style="padding:2px 7px;font-size:10px;">AI Review</button></td></tr>
+              <tr><td>08:58</td><td>GOLD</td><td class="dir-short">▼ SHORT</td><td>2322.10</td><td>2318.40</td><td class="pl-pos">+€ 22.20</td><td class="pl-pos">+0.16%</td><td><button class="btn btn-ghost" style="padding:2px 7px;font-size:10px;">AI Review</button></td></tr>
+              <tr><td>08:21</td><td>ROHÖL</td><td class="dir-long">▲ LONG</td><td>84.10</td><td>83.55</td><td class="pl-neg">-€ 16.50</td><td class="pl-neg">-0.65%</td><td><button class="btn btn-ghost" style="padding:2px 7px;font-size:10px;">AI Review</button></td></tr>
+              <tr><td>07:44</td><td>ERDGAS</td><td class="dir-long">▲ LONG</td><td>1.842</td><td>1.891</td><td class="pl-pos">+€ 29.40</td><td class="pl-pos">+2.66%</td><td><button class="btn btn-ghost" style="padding:2px 7px;font-size:10px;">AI Review</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div><!-- /page-trading -->
+
+      <!-- ══════════════════════════════════════════════════════
+           PAGE: SIMULATION & DATEN
+      ══════════════════════════════════════════════════════════ -->
+      <div class="page" id="page-daten">
+
+        <!-- ── ABSCHNITT 1: SIMULATION ── -->
+        <div class="section-label">Simulation</div>
+
+        <div class="grid-2 mb-14">
+          <div class="card">
+            <div class="card-header"><span class="card-title">Simulation starten</span></div>
+            <div class="form-row mb-14">
+              <div class="form-field">
+                <label>Asset</label>
+                <select>
+                  <option>GOLD</option><option>SILBER</option>
+                  <option>ROHÖL</option><option>ERDGAS</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label>Zeitraum</label>
+                <select>
+                  <option>Letzte 7 Tage</option>
+                  <option>Letzte 30 Tage</option>
+                  <option>Letzte 90 Tage</option>
+                  <option>Benutzerdefiniert</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label>Startkapital (€)</label>
+                <input type="number" value="10000">
+              </div>
+              <div class="form-field">
+                <label>Konfidenz-Schwelle</label>
+                <input type="number" value="8" min="1" max="10">
+              </div>
+            </div>
+            <button class="btn btn-primary" style="width:100%;">Simulation starten</button>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Simulation Ergebnisse</span>
+              <span class="card-badge badge-green">Abgeschlossen</span>
+            </div>
+            <div class="grid-2" style="gap:10px;">
+              <div><div class="stat-val" style="color:var(--green)">+18.7%</div><div class="stat-lbl">Gesamtrendite</div></div>
+              <div><div class="stat-val">142</div><div class="stat-lbl">Sim-Trades</div></div>
+              <div><div class="stat-val" style="color:var(--green)">71.1%</div><div class="stat-lbl">Win Rate</div></div>
+              <div><div class="stat-val" style="color:var(--red)">-4.3%</div><div class="stat-lbl">Max Drawdown</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Simulation Chart -->
+        <div class="card mb-14">
+          <div class="card-header">
+            <span class="card-title">Equity Kurve (Simulation)</span>
+            <span class="card-badge badge-dim">GOLD · 30 Tage</span>
+          </div>
+          <div class="chart-wrap tall">
+            <canvas id="simChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Simulation Trade-Liste -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">Simulations-Trades</span>
+            <div style="display:flex;gap:6px;">
+              <button class="btn btn-ghost" style="padding:3px 10px;font-size:11px;">CSV Export</button>
+              <button class="btn btn-ghost" style="padding:3px 10px;font-size:11px;">Filter</button>
+            </div>
+          </div>
+          <table class="trade-table">
+            <thead>
+              <tr><th>Zeit</th><th>Asset</th><th>Richtung</th><th>Einstieg</th><th>Ausstieg</th><th>Konfidenz</th><th>P/L %</th><th>Grund</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>15.03 08:12</td><td>GOLD</td><td class="dir-long">▲ LONG</td><td>2298.10</td><td>2311.40</td><td>8.8</td><td class="pl-pos">+0.58%</td><td style="color:var(--text-dim);font-size:10px;">TP erreicht</td></tr>
+              <tr><td>14.03 14:45</td><td>GOLD</td><td class="dir-short">▼ SHORT</td><td>2315.20</td><td>2308.70</td><td>8.1</td><td class="pl-pos">+0.28%</td><td style="color:var(--text-dim);font-size:10px;">TP erreicht</td></tr>
+              <tr><td>13.03 11:20</td><td>GOLD</td><td class="dir-long">▲ LONG</td><td>2290.50</td><td>2283.10</td><td>8.5</td><td class="pl-neg">-0.32%</td><td style="color:var(--text-dim);font-size:10px;">SL ausgelöst</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <hr class="divider">
+
+        <!-- ── ABSCHNITT 2: HISTORISCHE DATEN ── -->
+        <div class="section-label">Historische Daten</div>
+
+        <div class="grid-2 mb-14">
+          <div class="card">
+            <div class="card-header"><span class="card-title">Datenstatus</span></div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div class="api-row">
+                <div class="api-indicator ok"></div>
+                <span class="api-name">GOLD</span>
+                <span class="api-latency" style="margin-left:auto;">12.480 Candles · bis heute</span>
+              </div>
+              <div class="api-row">
+                <div class="api-indicator ok"></div>
+                <span class="api-name">SILBER</span>
+                <span class="api-latency" style="margin-left:auto;">11.920 Candles · bis heute</span>
+              </div>
+              <div class="api-row">
+                <div class="api-indicator warn"></div>
+                <span class="api-name">ROHÖL</span>
+                <span class="api-latency" style="margin-left:auto;">8.340 Candles · bis 28.02.</span>
+              </div>
+              <div class="api-row">
+                <div class="api-indicator err"></div>
+                <span class="api-name">ERDGAS</span>
+                <span class="api-latency" style="margin-left:auto;">Keine Daten</span>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">Daten abrufen</span></div>
+            <div class="form-row mb-14" style="grid-template-columns:1fr;">
+              <div class="form-field">
+                <label>Asset(s)</label>
+                <select>
+                  <option>Alle Assets</option>
+                  <option>GOLD</option><option>SILBER</option>
+                  <option>ROHÖL</option><option>ERDGAS</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label>Zeitraum</label>
+                <select>
+                  <option>Letzte 7 Tage (Update)</option>
+                  <option>Letzte 30 Tage</option>
+                  <option>Letzte 90 Tage</option>
+                  <option>Vollständig (1 Jahr)</option>
+                </select>
+              </div>
+            </div>
+            <button class="btn btn-primary" style="width:100%;">Daten abrufen</button>
+          </div>
+        </div>
+
+        <!-- Fetch Log -->
+        <div class="card">
+          <div class="card-header"><span class="card-title">Abruf-Log</span></div>
+          <div class="log-box">
+            <div class="log-ok">[09:00:01] GOLD: 480 neue Candles gespeichert (01.03–30.03)</div>
+            <div class="log-ok">[09:00:04] SILBER: 480 neue Candles gespeichert</div>
+            <div class="log-warn">[09:00:07] ROHÖL: Nur 180 Candles verfügbar – API-Limit erreicht</div>
+            <div class="log-err">[09:00:09] ERDGAS: Verbindung fehlgeschlagen – bitte erneut versuchen</div>
+            <div class="log-dim">[08:00:02] Täglicher Update-Job abgeschlossen</div>
+            <div class="log-dim">[07:00:01] Täglicher Update-Job abgeschlossen</div>
+          </div>
+        </div>
+      </div><!-- /page-daten -->
+
+      <!-- ══════════════════════════════════════════════════════
+           PAGE: BOT EINSTELLUNGEN
+      ══════════════════════════════════════════════════════════ -->
+      <div class="page" id="page-settings">
+
+        <div class="notif-banner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          Änderungen werden erst beim nächsten Bot-Neustart aktiv.
+        </div>
+
+        <div class="grid-2" style="align-items:start;gap:16px;">
+
+          <!-- Linke Spalte -->
+          <div>
+            <!-- Risiko -->
+            <div class="card mb-14">
+              <div class="settings-group-title">Risiko & Positionsgröße</div>
+              <div class="form-row">
+                <div class="form-field">
+                  <label>Risiko je Trade (%)</label>
+                  <input type="number" value="2.0" step="0.1" min="0.1" max="10">
+                </div>
+                <div class="form-field">
+                  <label>Max. offene Positionen</label>
+                  <input type="number" value="4" min="1" max="10">
+                </div>
+                <div class="form-field">
+                  <label>Konfidenz-Schwelle (1–10)</label>
+                  <input type="number" value="8" min="1" max="10" step="0.1">
+                </div>
+                <div class="form-field">
+                  <label>Min. Risk/Reward Ratio</label>
+                  <input type="number" value="1.5" step="0.1" min="0.5">
+                </div>
+                <div class="form-field">
+                  <label>Tages-Drawdown-Limit (%)</label>
+                  <input type="number" value="5.0" step="0.1">
+                </div>
+                <div class="form-field">
+                  <label>Max. Verlust-Streak</label>
+                  <input type="number" value="3" min="1">
+                </div>
+              </div>
+            </div>
+
+            <!-- Trading-Fenster -->
+            <div class="card mb-14">
+              <div class="settings-group-title">Handelszeiten</div>
+              <div class="form-row">
+                <div class="form-field">
+                  <label>Handel ab (Uhrzeit)</label>
+                  <input type="time" value="08:00">
+                </div>
+                <div class="form-field">
+                  <label>Handel bis (Uhrzeit)</label>
+                  <input type="time" value="20:00">
+                </div>
+              </div>
+              <div style="margin-top:12px;">
+                <div class="toggle-row">
+                  <div><div class="toggle-label">Wochenenden ausschließen</div></div>
+                  <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+                </div>
+                <div class="toggle-row">
+                  <div><div class="toggle-label">Markt-News-Sperre</div><div class="toggle-desc">Kein Trading 30 Min vor wichtigen Ereignissen</div></div>
+                  <label class="toggle"><input type="checkbox"><span class="toggle-slider"></span></label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Assets -->
+            <div class="card">
+              <div class="settings-group-title">Aktive Assets</div>
+              <div class="toggle-row">
+                <div><div class="toggle-label">GOLD</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <div><div class="toggle-label">SILBER</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <div><div class="toggle-label">ROHÖL</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <div><div class="toggle-label">ERDGAS</div></div>
+                <label class="toggle"><input type="checkbox"><span class="toggle-slider"></span></label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Rechte Spalte -->
+          <div>
+            <!-- API Konfiguration -->
+            <div class="card mb-14">
+              <div class="settings-group-title">API Konfiguration</div>
+              <div class="form-row" style="grid-template-columns:1fr;">
+                <div class="form-field">
+                  <label>Capital.com Modus</label>
+                  <select>
+                    <option>Demo (Sicher)</option>
+                    <option>Live</option>
+                  </select>
+                </div>
+                <div class="form-field">
+                  <label>Capital.com API Key</label>
+                  <input type="password" value="••••••••••••••••••••">
+                </div>
+                <div class="form-field">
+                  <label>Claude AI API Key</label>
+                  <input type="password" value="••••••••••••••••••••">
+                </div>
+                <div class="form-field">
+                  <label>ntfy.sh Topic</label>
+                  <input type="text" value="mein-tradingbot">
+                </div>
+              </div>
+            </div>
+
+            <!-- KI-Modell -->
+            <div class="card mb-14">
+              <div class="settings-group-title">KI-Modell</div>
+              <div class="form-row" style="grid-template-columns:1fr;">
+                <div class="form-field">
+                  <label>Aktives Modell</label>
+                  <select>
+                    <option>model_v2_gold_2024.pt</option>
+                    <option>model_v1_gold_2023.pt</option>
+                  </select>
+                </div>
+              </div>
+              <div class="toggle-row" style="margin-top:10px;">
+                <div><div class="toggle-label">ATR-basierter Stop-Loss</div><div class="toggle-desc">Dynamischer SL basierend auf Volatilität</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <div><div class="toggle-label">Trailing Stop aktivieren</div></div>
+                <label class="toggle"><input type="checkbox"><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <div><div class="toggle-label">KI Trade-Reviews (Claude)</div><div class="toggle-desc">Automatische Analyse nach jedem Trade</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+            </div>
+
+            <!-- Notifications -->
+            <div class="card">
+              <div class="settings-group-title">Benachrichtigungen</div>
+              <div class="toggle-row">
+                <div><div class="toggle-label">Trade-Ausführung</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <div><div class="toggle-label">Tages-Zusammenfassung</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <div><div class="toggle-label">Drawdown-Warnung</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <div><div class="toggle-label">Bot-Fehler Alarm</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Save Button -->
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+          <button class="btn btn-ghost">Zurücksetzen</button>
+          <button class="btn btn-primary">Einstellungen speichern</button>
+        </div>
+      </div><!-- /page-settings -->
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<script>
+  /* ─── SIDEBAR TOGGLE ─────────────────────────────────── */
+  function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('collapsed');
+  }
+
+  /* ─── PAGE NAVIGATION ────────────────────────────────── */
+  const pageTitles = {
+    dashboard: 'Dashboard',
+    trading: 'Trading',
+    daten: 'Simulation & Daten',
+    settings: 'Bot Einstellungen'
+  };
+
+  function showPage(name, el) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.getElementById('page-' + name).classList.add('active');
+    el.classList.add('active');
+    document.getElementById('topbarTitle').textContent = pageTitles[name];
+  }
+
+  /* ─── BOT TOGGLE ─────────────────────────────────────── */
+  let botRunning = true;
+  function toggleBot() {
+    botRunning = !botRunning;
+    const btn = document.getElementById('stopBotBtn');
+    const dot = document.getElementById('sidebarStatusDot');
+    const txt = document.getElementById('sidebarStatusText');
+    if (botRunning) {
+      btn.textContent = 'Bot stoppen';
+      btn.className = 'btn btn-danger';
+      dot.className = 'status-dot running';
+      txt.textContent = 'Bot läuft · v2.1';
+    } else {
+      btn.textContent = 'Bot starten';
+      btn.className = 'btn btn-primary';
+      dot.className = 'status-dot stopped';
+      txt.textContent = 'Bot gestoppt';
+    }
+  }
+
+  /* ─── API CHECK (Mock) ───────────────────────────────── */
+  function checkApis() {
+    const indicators = document.querySelectorAll('#page-dashboard .api-indicator');
+    indicators.forEach(i => { i.className = 'api-indicator'; i.style.background = 'var(--text-dim)'; });
+    setTimeout(() => {
+      indicators[0].className = 'api-indicator ok';
+      indicators[1].className = 'api-indicator ok';
+      indicators[2].className = 'api-indicator ok';
+      indicators[3].className = 'api-indicator warn';
+    }, 800);
+  }
+
+  /* ─── CHARTS ─────────────────────────────────────────── */
+  const chartDefaults = {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false }, tooltip: {
+      backgroundColor: '#18232e', borderColor: 'rgba(0,255,65,0.3)',
+      borderWidth: 1, titleColor: '#c9d1d9', bodyColor: '#00ff41',
+      callbacks: { label: ctx => ' ' + ctx.parsed.y.toFixed(2) }
+    }},
+    scales: {
+      x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' } } },
+      y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' } } }
+    }
+  };
+
+  // Balance Chart (7 Tage)
+  const balanceLabels = ['24.03','25.03','26.03','27.03','28.03','29.03','30.03'];
+  const balanceData = [12120, 12230, 12190, 12410, 12580, 12700, 12847];
+  new Chart(document.getElementById('balanceChart'), {
+    type: 'line',
+    data: {
+      labels: balanceLabels,
+      datasets: [{
+        data: balanceData,
+        borderColor: '#00ff41', borderWidth: 2,
+        backgroundColor: 'rgba(0,255,65,0.06)',
+        fill: true, tension: 0.4,
+        pointBackgroundColor: '#00ff41', pointRadius: 3, pointHoverRadius: 5
+      }]
+    },
+    options: { ...chartDefaults,
+      scales: { ...chartDefaults.scales,
+        y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks,
+          callback: v => '€ ' + v.toLocaleString('de-DE')
+        }}
+      }
+    }
+  });
+
+  // P/L Chart
+  const plLabels = ['24.03','25.03','26.03','27.03','28.03','29.03','30.03'];
+  const plData = [+120, +80, -40, +210, +130, +90, +347];
+  new Chart(document.getElementById('plChart'), {
+    type: 'bar',
+    data: {
+      labels: plLabels,
+      datasets: [{
+        data: plData,
+        backgroundColor: plData.map(v => v >= 0 ? 'rgba(0,255,65,0.5)' : 'rgba(255,59,59,0.5)'),
+        borderColor: plData.map(v => v >= 0 ? '#00ff41' : '#ff3b3b'),
+        borderWidth: 1, borderRadius: 3
+      }]
+    },
+    options: { ...chartDefaults,
+      scales: { ...chartDefaults.scales,
+        y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks,
+          callback: v => (v >= 0 ? '+' : '') + '€ ' + v
+        }}
+      }
+    }
+  });
+
+  // Simulation Chart
+  const simLabels = Array.from({length:30}, (_,i) => {
+    const d = new Date('2025-03-01'); d.setDate(d.getDate()+i);
+    return d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'});
+  });
+  let simVal = 10000;
+  const simData = simLabels.map(() => {
+    simVal += (Math.random() - 0.38) * 180;
+    return Math.round(simVal);
+  });
+  simData[simData.length - 1] = 11870;
+  new Chart(document.getElementById('simChart'), {
+    type: 'line',
+    data: {
+      labels: simLabels,
+      datasets: [{
+        data: simData,
+        borderColor: '#3b82f6', borderWidth: 2,
+        backgroundColor: 'rgba(59,130,246,0.06)',
+        fill: true, tension: 0.3,
+        pointRadius: 0, pointHoverRadius: 4,
+        pointBackgroundColor: '#3b82f6'
+      }]
+    },
+    options: { ...chartDefaults,
+      scales: { ...chartDefaults.scales,
+        y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks,
+          callback: v => '€ ' + v.toLocaleString('de-DE')
+        }}
+      }
+    }
+  });
+</script>
+</body>
+</html>

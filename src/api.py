@@ -1,14 +1,17 @@
 """FastAPI-Server fuer Dashboard-Buttons und Bot-Steuerung."""
 import asyncio
+import glob as _glob
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import config, database
@@ -1241,5 +1244,96 @@ def create_api() -> FastAPI:
             raise
         except Exception as exc:
             raise HTTPException(500, str(exc))
+
+    # ── Bot-Steuerung ──────────────────────────────────────────────────────
+    _bot_state: dict = {"running": True}
+
+    @app.get("/api/bot/status")
+    async def get_bot_status():
+        return {"running": _bot_state["running"]}
+
+    @app.post("/api/bot/start")
+    async def start_bot():
+        _bot_state["running"] = True
+        config.TRADING_ENABLED = True
+        logger.info("Bot gestartet (via Dashboard)")
+        return {"status": "started", "running": True}
+
+    @app.post("/api/bot/stop")
+    async def stop_bot():
+        _bot_state["running"] = False
+        config.TRADING_ENABLED = False
+        logger.info("Bot gestoppt (via Dashboard)")
+        return {"status": "stopped", "running": False}
+
+    # ── GET /api/snapshots ─────────────────────────────────────────────────
+    @app.get("/api/snapshots")
+    async def get_snapshots(days: int = 7):
+        """Kontostand-Verlauf (account_snapshots) fuer Equity-Kurve."""
+        try:
+            import aiosqlite
+            since = (datetime.now(tz=config.TZ) - timedelta(days=days)).isoformat()
+            rows: list[dict] = []
+            async with aiosqlite.connect(config.DB_PATH) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    "SELECT timestamp, balance, equity, open_positions "
+                    "FROM account_snapshots WHERE timestamp >= ? ORDER BY timestamp ASC",
+                    (since,),
+                ) as cur:
+                    async for row in cur:
+                        rows.append(dict(row))
+            return {"snapshots": rows, "days": days}
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+
+    # ── GET /api/trades ────────────────────────────────────────────────────
+    @app.get("/api/trades")
+    async def get_trades(limit: int = 50, status: str | None = None):
+        """Letzte N Trades (offen + geschlossen) aus trades.db."""
+        try:
+            import aiosqlite
+            where = f"WHERE status = '{status}'" if status else ""
+            rows: list[dict] = []
+            async with aiosqlite.connect(config.DB_PATH) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    f"SELECT id, timestamp, asset, direction, entry_price, stop_loss, "
+                    f"take_profit, position_size, confidence, status, exit_price, "
+                    f"exit_timestamp, profit_loss, profit_loss_pct "
+                    f"FROM trades {where} ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                ) as cur:
+                    async for row in cur:
+                        rows.append(dict(row))
+            return {"trades": rows, "total": len(rows)}
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+
+    # ── GET /api/models ────────────────────────────────────────────────────
+    @app.get("/api/models")
+    async def get_models():
+        """Alle .pt-Modelle im models/-Verzeichnis."""
+        try:
+            model_dir = config.AI_MODELS_DIR
+            models = []
+            for p in sorted(_glob.glob(os.path.join(model_dir, "*.pt"))):
+                models.append({
+                    "name": os.path.basename(p),
+                    "path": p,
+                    "size_kb": round(os.path.getsize(p) / 1024, 1),
+                })
+            return {"models": models}
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+
+    # ── Static Files (SPA Dashboard) ───────────────────────────────────────
+    _static_dir = Path(__file__).parent.parent / "static"
+    if _static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+        @app.get("/")
+        async def serve_dashboard():
+            return FileResponse(str(_static_dir / "index.html"))
 
     return app

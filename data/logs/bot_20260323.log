@@ -1,0 +1,401 @@
+2026-03-23 12:26:17,138 [INFO] src.database: Database initialised at ./data\trades.db
+2026-03-23 12:26:17,141 [INFO] __main__: Initialising scheduler (schedule: 0 8,12,16 * * mon-fri, TZ: Europe/Berlin)
+2026-03-23 12:26:17,145 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 12:26:17,148 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 12:26:17,151 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 12:26:17,154 [INFO] apscheduler.scheduler: Added job "Daily Trading Routine" to job store "default"
+2026-03-23 12:26:17,158 [INFO] apscheduler.scheduler: Added job "Position Monitor (5 min)" to job store "default"
+2026-03-23 12:26:17,161 [INFO] apscheduler.scheduler: Added job "Daily Summary (20:00)" to job store "default"
+2026-03-23 12:26:17,165 [INFO] apscheduler.scheduler: Scheduler started
+2026-03-23 12:26:17,166 [INFO] __main__: Scheduler started. Next analysis: 2026-03-23 16:00:00+01:00 | Monitor: alle 5 Min | Summary: 20:00
+2026-03-23 12:26:17,168 [INFO] __main__: Running startup checks...
+2026-03-23 12:26:17,172 [INFO] __main__: ============================================================
+2026-03-23 12:26:17,174 [INFO] __main__: Daily routine started at 2026-03-23 12:26:17 CET
+2026-03-23 12:26:17,177 [INFO] __main__: ============================================================
+2026-03-23 12:26:17,854 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 12:26:17,860 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 12:26:17,961 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/accounts "HTTP/1.1 200 "
+2026-03-23 12:26:18,048 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 12:26:18,053 [INFO] __main__: Account: balance=954.29 EURd | equity=0.00 | open_positions=0
+2026-03-23 12:26:18,143 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/GOLD "HTTP/1.1 200 "
+2026-03-23 12:26:18,214 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/GOLD?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 12:26:18,284 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/SILVER "HTTP/1.1 200 "
+2026-03-23 12:26:18,365 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/SILVER?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 12:26:18,438 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/OIL_CRUDE "HTTP/1.1 200 "
+2026-03-23 12:26:18,516 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/OIL_CRUDE?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 12:26:18,587 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/NATURALGAS "HTTP/1.1 200 "
+2026-03-23 12:26:18,664 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/NATURALGAS?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 12:26:18,831 [INFO] src.analyzer: Requesting Claude market analysis (4 assets)...
+2026-03-23 12:26:20,685 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-03-23 12:26:48,332 [INFO] src.analyzer: Claude analysis received (tokens: 2099 in / 1433 out, cost: $0.0278)
+2026-03-23 12:26:48,437 [INFO] __main__: Analysis: recommendation=WAIT | best=NATURALGAS NONE confidence=4 RR=0.00
+2026-03-23 12:26:48,440 [INFO] __main__: Signal rejected: Recommendation is WAIT: Extreme Marktvolatilität über alle Rohstoffe hinweg macht zuverlässige Entries unmöglich. Alle Assets befinden sich in starken Abwärtstrends mit ungewöhnlich großen Tagesranges (Öl -8.25%, Gold -2.31%, Gas -2.70%). Ein unidentifiziertes Makroereignis scheint den Markt zu treiben - Trading in solchen Phasen ist spekulativ und entspricht nicht den Mindestanforderungen an Konfidenz (>=7) und Risk/Reward (>=1:1.5). Der maximale Risikobetrag von 47.71 EUR ist bei diesen Volatilitätsniveaus nicht ausreichend für sinnvolle Positionsgrößen. Abwarten bis sich der Markt stabilisiert und klare Strukturen erkennbar sind.
+2026-03-23 12:26:49,246 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 12:26:49,911 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 12:26:49,917 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 12:26:50,003 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 12:26:50,502 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 12:26:50,507 [INFO] __main__: Daily summary sent: 0 trades, P/L=0.00
+2026-03-23 12:31:17,148 [INFO] apscheduler.executors.default: Running job "Position Monitor (5 min) (trigger: interval[0:05:00], next run at: 2026-03-23 12:36:17 CET)" (scheduled at 2026-03-23 12:31:17.148386+01:00)
+2026-03-23 12:31:18,039 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 12:31:18,043 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 12:31:18,124 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 12:31:18,129 [INFO] apscheduler.executors.default: Job "Position Monitor (5 min) (trigger: interval[0:05:00], next run at: 2026-03-23 12:36:17 CET)" executed successfully
+2026-03-23 12:36:17,161 [INFO] apscheduler.executors.default: Running job "Position Monitor (5 min) (trigger: interval[0:05:00], next run at: 2026-03-23 12:41:17 CET)" (scheduled at 2026-03-23 12:36:17.148386+01:00)
+2026-03-23 12:36:18,399 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 12:36:18,403 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 12:36:18,492 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 12:36:18,497 [INFO] apscheduler.executors.default: Job "Position Monitor (5 min) (trigger: interval[0:05:00], next run at: 2026-03-23 12:41:17 CET)" executed successfully
+2026-03-23 12:36:55,381 [INFO] src.database: Database initialised at ./data\trades.db
+2026-03-23 12:36:55,383 [INFO] __main__: Initialising scheduler (schedule: 0 8,12,16 * * mon-fri, TZ: Europe/Berlin)
+2026-03-23 12:36:55,387 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 12:36:55,390 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 12:36:55,393 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 12:36:55,398 [INFO] apscheduler.scheduler: Added job "Daily Trading Routine" to job store "default"
+2026-03-23 12:36:55,402 [INFO] apscheduler.scheduler: Added job "Position Monitor (5 min)" to job store "default"
+2026-03-23 12:36:55,405 [INFO] apscheduler.scheduler: Added job "Daily Summary (20:00)" to job store "default"
+2026-03-23 12:36:55,406 [INFO] apscheduler.scheduler: Scheduler started
+2026-03-23 12:36:55,410 [INFO] __main__: Scheduler started. Next analysis: 2026-03-23 16:00:00+01:00 | Monitor: alle 5 Min | Summary: 20:00
+2026-03-23 12:36:55,412 [INFO] __main__: Running startup checks...
+2026-03-23 12:36:55,415 [INFO] __main__: ============================================================
+2026-03-23 12:36:55,418 [INFO] __main__: Daily routine started at 2026-03-23 12:36:55 CET
+2026-03-23 12:36:55,422 [INFO] __main__: ============================================================
+2026-03-23 12:36:56,003 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 12:36:56,008 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 12:36:56,105 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/accounts "HTTP/1.1 200 "
+2026-03-23 12:36:56,186 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 12:36:56,190 [INFO] __main__: Account: balance=954.29 EURd | equity=0.00 | open_positions=0
+2026-03-23 12:36:56,262 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/GOLD "HTTP/1.1 200 "
+2026-03-23 12:36:56,328 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/GOLD?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 12:36:56,397 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/SILVER "HTTP/1.1 200 "
+2026-03-23 12:36:56,470 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/SILVER?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 12:36:56,538 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/OIL_CRUDE "HTTP/1.1 200 "
+2026-03-23 12:36:56,606 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/OIL_CRUDE?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 12:36:56,676 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/NATURALGAS "HTTP/1.1 200 "
+2026-03-23 12:36:56,746 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/NATURALGAS?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 12:36:56,749 [INFO] src.news_analyzer: News-Analyse deaktiviert (NEWS_API_KEY nicht gesetzt)
+2026-03-23 12:36:56,924 [INFO] src.analyzer: Requesting Claude market analysis (4 assets)...
+2026-03-23 12:36:58,804 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-03-23 12:37:29,326 [INFO] src.analyzer: Claude analysis received (tokens: 2099 in / 1534 out, cost: $0.0293)
+2026-03-23 12:37:29,421 [INFO] __main__: Analysis: recommendation=WAIT | best=SILVER NONE confidence=4 RR=0.00
+2026-03-23 12:37:29,423 [INFO] __main__: Signal rejected: Recommendation is WAIT: Kein Asset erreicht heute einen Confidence-Score von 7 oder höher. Der Markt befindet sich in einem extremen Risk-Off-Modus mit historisch hoher Intraday-Volatilität (Gold: 10.5% Spanne, Öl: 17% Spanne, Silber: 13% Spanne). Unter diesen Bedingungen ist eine seriöse Stop-Loss-Platzierung innerhalb des 5%-Kontorisiko-Limits (max. 47.71 EUR) nicht möglich, ohne entweder zu enge Stops (sofortiger Ausbruch wahrscheinlich) oder zu kleine Positionsgrößen (kein akzeptables RRR) zu verwenden. Die Richtung ist unklar – massive Erholung bei Silber vs. anhaltende Schwäche bei Öl und Gold. Abwarten bis sich die Volatilität normalisiert und klare Trends/Strukturen erkennbar sind.
+2026-03-23 12:37:29,904 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 12:37:30,557 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 12:37:30,562 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 12:37:30,643 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 12:37:31,162 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 12:37:31,165 [INFO] __main__: Daily summary sent: 0 trades, P/L=0.00
+2026-03-23 12:37:45,512 [INFO] src.database: Database initialised at ./data\trades.db
+2026-03-23 12:37:45,533 [INFO] __main__: Initialising scheduler (schedule: 0 8,12,16 * * mon-fri, TZ: Europe/Berlin)
+2026-03-23 12:37:45,540 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 12:37:45,557 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 12:37:45,560 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 12:37:45,562 [INFO] apscheduler.scheduler: Added job "Daily Trading Routine" to job store "default"
+2026-03-23 12:37:45,564 [INFO] apscheduler.scheduler: Added job "Position Monitor (5 min)" to job store "default"
+2026-03-23 12:37:45,568 [INFO] apscheduler.scheduler: Added job "Daily Summary (20:00)" to job store "default"
+2026-03-23 12:37:45,571 [INFO] apscheduler.scheduler: Scheduler started
+2026-03-23 12:37:45,574 [INFO] __main__: Scheduler started. Next analysis: 2026-03-23 16:00:00+01:00 | Monitor: alle 5 Min | Summary: 20:00
+2026-03-23 12:37:45,577 [INFO] __main__: Running startup checks...
+2026-03-23 12:37:45,580 [INFO] __main__: ============================================================
+2026-03-23 12:37:45,584 [INFO] __main__: Daily routine started at 2026-03-23 12:37:45 CET
+2026-03-23 12:37:45,586 [INFO] __main__: ============================================================
+2026-03-23 12:37:46,158 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 12:37:46,164 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 12:37:46,267 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/accounts "HTTP/1.1 200 "
+2026-03-23 12:37:46,348 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 12:37:46,351 [INFO] __main__: Account: balance=954.29 EURd | equity=0.00 | open_positions=0
+2026-03-23 12:37:46,420 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/GOLD "HTTP/1.1 200 "
+2026-03-23 12:37:46,492 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/GOLD?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 12:37:46,562 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/SILVER "HTTP/1.1 200 "
+2026-03-23 12:37:46,631 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/SILVER?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 12:37:46,698 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/OIL_CRUDE "HTTP/1.1 200 "
+2026-03-23 12:37:46,768 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/OIL_CRUDE?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 12:37:46,833 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/NATURALGAS "HTTP/1.1 200 "
+2026-03-23 12:37:46,901 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/NATURALGAS?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 12:37:47,283 [INFO] httpx: HTTP Request: GET https://newsapi.org/v2/everything?q=oil+OR+gold+OR+silver+OR+gas+OR+commodities+OR+fed+OR+ecb+OR+tariff+OR+sanctions+OR+opec+OR+inflation+OR+recession&from=2026-03-22T11%3A37%3A46Z&language=en&sortBy=relevancy&pageSize=50&apiKey=db86d355e1084f33bb48287f1c617361 "HTTP/1.1 200 OK"
+2026-03-23 12:37:47,456 [INFO] src.analyzer: Requesting Claude market analysis (4 assets)...
+2026-03-23 12:37:48,818 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-03-23 12:38:12,865 [INFO] src.analyzer: Claude analysis received (tokens: 2099 in / 1354 out, cost: $0.0266)
+2026-03-23 12:38:12,974 [INFO] __main__: Analysis: recommendation=WAIT | best=SILVER NONE confidence=4 RR=0.00
+2026-03-23 12:38:12,977 [INFO] __main__: Signal rejected: Recommendation is WAIT: Die heutige Marktlage ist durch extreme, ungewöhnliche Volatilität in allen beobachteten Rohstoffen geprägt. Gold, Öl und Silber weisen Tagesranges auf, die ein Vielfaches der normalen Bewegung ausmachen. Unter diesen Bedingungen ist eine verlässliche Stop-Loss-Platzierung innerhalb des 5%-Risikolimits (max. 47.71 EUR) nicht möglich, ohne sofort ausgestoppt zu werden. Alle Assets befinden sich in starken Abwärtstrends ohne klare Stabilisierungssignale. Kein Asset erreicht einen Confidence-Score von 7 oder höher. Es wird empfohlen, die nächsten 1-2 Handelstage abzuwarten, bis sich die Volatilität normalisiert und klare Trendstrukturen oder Reversal-Muster erkennbar sind.
+2026-03-23 12:38:13,777 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 12:38:14,442 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 12:38:14,449 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 12:38:14,528 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 12:38:15,035 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 12:38:15,039 [INFO] __main__: Daily summary sent: 0 trades, P/L=0.00
+2026-03-23 13:00:59,084 [INFO] src.database: Database initialised at ./data\trades.db
+2026-03-23 13:00:59,092 [INFO] __main__: Initialising scheduler (schedule: 0 8,12,16 * * mon-fri, TZ: Europe/Berlin)
+2026-03-23 13:00:59,095 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 13:00:59,096 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 13:00:59,100 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 13:00:59,104 [INFO] apscheduler.scheduler: Added job "Daily Trading Routine" to job store "default"
+2026-03-23 13:00:59,107 [INFO] apscheduler.scheduler: Added job "Position Monitor (5 min)" to job store "default"
+2026-03-23 13:00:59,112 [INFO] apscheduler.scheduler: Added job "Daily Summary (20:00)" to job store "default"
+2026-03-23 13:00:59,113 [INFO] apscheduler.scheduler: Scheduler started
+2026-03-23 13:00:59,115 [INFO] __main__: Scheduler started. Next analysis: 2026-03-23 16:00:00+01:00 | Monitor: alle 5 Min | Summary: 20:00
+2026-03-23 13:00:59,116 [INFO] __main__: Running startup checks...
+2026-03-23 13:00:59,119 [INFO] __main__: ============================================================
+2026-03-23 13:00:59,122 [INFO] __main__: Daily routine started at 2026-03-23 13:00:59 CET
+2026-03-23 13:00:59,124 [INFO] __main__: ============================================================
+2026-03-23 13:00:59,760 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 13:00:59,764 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 13:00:59,859 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/accounts "HTTP/1.1 200 "
+2026-03-23 13:00:59,941 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 13:00:59,945 [INFO] __main__: Account: balance=954.29 EURd | equity=0.00 | open_positions=0
+2026-03-23 13:01:00,034 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/GOLD "HTTP/1.1 200 "
+2026-03-23 13:01:00,120 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/GOLD?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 13:01:00,187 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/SILVER "HTTP/1.1 200 "
+2026-03-23 13:01:00,283 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/SILVER?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 13:01:00,348 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/OIL_CRUDE "HTTP/1.1 200 "
+2026-03-23 13:01:00,443 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/OIL_CRUDE?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 13:01:00,530 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/NATURALGAS "HTTP/1.1 200 "
+2026-03-23 13:01:00,612 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/NATURALGAS?resolution=DAY&max=30 "HTTP/1.1 200 "
+2026-03-23 13:01:00,998 [INFO] httpx: HTTP Request: GET https://newsapi.org/v2/everything?q=oil+OR+gold+OR+silver+OR+gas+OR+commodities+OR+fed+OR+ecb+OR+tariff+OR+sanctions+OR+opec+OR+inflation+OR+recession&from=2026-03-22T12%3A01%3A00Z&language=en&sortBy=relevancy&pageSize=50&apiKey=db86d355e1084f33bb48287f1c617361 "HTTP/1.1 200 OK"
+2026-03-23 13:01:01,002 [INFO] src.news_analyzer: News-Analyse: 1 Artikel, Event=keins, Konfidenz=0%
+2026-03-23 13:01:01,172 [INFO] src.analyzer: Requesting Claude market analysis (4 assets)...
+2026-03-23 13:01:03,404 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-03-23 13:01:31,722 [INFO] src.analyzer: Claude analysis received (tokens: 2166 in / 1519 out, cost: $0.0293)
+2026-03-23 13:01:31,815 [INFO] __main__: Analysis: recommendation=WAIT | best=OIL_CRUDE BUY confidence=6 RR=0.00
+2026-03-23 13:01:31,818 [INFO] __main__: Signal rejected: Recommendation is WAIT: Kein Asset erreicht einen Confidence-Score von >= 7. Die gesamte Rohstoffkomplexität zeigt heute extreme Volatilität und unklare fundamentale Auslöser. Der -5.53% Einbruch bei Öl mit einer Intraday-Spanne von über 17 USD, sowie der anhaltende starke Abwärtstrend bei Gold und Silber, machen ein sicheres Trade-Setup nach Swing-Trading-Regeln unmöglich. Die erhöhte Volatilität verhindert sinnvolle Stop-Loss-Platzierung ohne übermäßiges Risiko zu eingehen. Abwarten bis Marktlage sich stabilisiert und klare Trendrichtung mit definierbarem Risk/Reward erkennbar ist.
+2026-03-23 13:01:32,532 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 13:01:33,318 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 13:01:33,322 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 13:01:33,397 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 13:01:33,951 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 13:01:33,955 [INFO] __main__: Daily summary sent: 0 trades, P/L=0.00
+2026-03-23 13:02:52,517 [INFO] src.database: Database initialised at ./data\trades.db
+2026-03-23 13:02:52,520 [INFO] __main__: Initialising scheduler (schedule: 0 8,12,16 * * mon-fri, TZ: Europe/Berlin)
+2026-03-23 13:02:52,525 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 13:02:52,529 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 13:02:52,532 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 13:02:52,535 [INFO] apscheduler.scheduler: Added job "Daily Trading Routine" to job store "default"
+2026-03-23 13:02:52,538 [INFO] apscheduler.scheduler: Added job "Position Monitor (5 min)" to job store "default"
+2026-03-23 13:02:52,542 [INFO] apscheduler.scheduler: Added job "Daily Summary (20:00)" to job store "default"
+2026-03-23 13:02:52,544 [INFO] apscheduler.scheduler: Scheduler started
+2026-03-23 13:02:52,546 [INFO] __main__: Scheduler started. Next analysis: 2026-03-23 16:00:00+01:00 | Monitor: alle 5 Min | Summary: 20:00
+2026-03-23 13:02:52,549 [INFO] __main__: Running startup checks...
+2026-03-23 13:02:52,552 [INFO] __main__: ============================================================
+2026-03-23 13:02:52,554 [INFO] __main__: Daily routine started at 2026-03-23 13:02:52 CET
+2026-03-23 13:02:52,556 [INFO] __main__: ============================================================
+2026-03-23 13:02:53,217 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 13:02:53,220 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 13:02:53,323 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/accounts "HTTP/1.1 200 "
+2026-03-23 13:02:53,409 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 13:02:53,411 [INFO] __main__: Account: balance=954.29 EURd | equity=0.00 | open_positions=0
+2026-03-23 13:02:53,488 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/GOLD "HTTP/1.1 200 "
+2026-03-23 13:02:53,559 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/GOLD?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 13:02:53,626 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/SILVER "HTTP/1.1 200 "
+2026-03-23 13:02:53,699 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/SILVER?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 13:02:53,769 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/OIL_CRUDE "HTTP/1.1 200 "
+2026-03-23 13:02:53,854 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/OIL_CRUDE?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 13:02:53,922 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/NATURALGAS "HTTP/1.1 200 "
+2026-03-23 13:02:53,994 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/NATURALGAS?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 13:02:54,370 [INFO] httpx: HTTP Request: GET https://newsapi.org/v2/everything?q=oil+OR+gold+OR+silver+OR+gas+OR+commodities+OR+fed+OR+ecb+OR+tariff+OR+sanctions+OR+opec+OR+inflation+OR+recession&from=2026-03-22T12%3A02%3A54Z&language=en&sortBy=relevancy&pageSize=50&apiKey=db86d355e1084f33bb48287f1c617361 "HTTP/1.1 200 OK"
+2026-03-23 13:02:54,545 [INFO] src.analyzer: Requesting Claude market analysis (4 assets)...
+2026-03-23 13:02:55,484 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-03-23 13:03:20,873 [INFO] src.analyzer: Claude analysis received (tokens: 2199 in / 1264 out, cost: $0.0256)
+2026-03-23 13:03:20,970 [INFO] __main__: Analysis: recommendation=WAIT | best=GOLD BUY confidence=6 RR=1.52
+2026-03-23 13:03:20,971 [INFO] __main__: Signal rejected: Recommendation is WAIT: Kein Asset erreicht den erforderlichen Confidence-Score von mindestens 7. Der gesamte Markt befindet sich in einer extremen Volatilitätsphase mit massiven Intraday-Schwankungen (Gold Range >430 Punkte, Öl Range >17 USD). Die Ursache der starken Sellwelle ist unklar, was das Risiko weiterer Kurseinbrüche oder weiterer Erholungen unkalkulierbar macht. Für Intraday-Trading sind solche Bedingungen besonders gefährlich, da Stop-Losses leicht durch Volatilitätsspitzen gerissen werden. Abwarten bis sich klarere Strukturen und ein stabiler Trend auf Stundenbasis etablieren.
+2026-03-23 13:03:21,688 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 13:03:22,492 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 13:03:22,495 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 13:03:22,574 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 13:03:23,087 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 13:03:23,091 [INFO] __main__: Daily summary sent: 0 trades, P/L=0.00
+2026-03-23 13:07:52,532 [INFO] apscheduler.executors.default: Running job "Position Monitor (5 min) (trigger: interval[0:05:00], next run at: 2026-03-23 13:12:52 CET)" (scheduled at 2026-03-23 13:07:52.529566+01:00)
+2026-03-23 13:07:53,861 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 13:07:53,866 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 13:07:53,948 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 13:07:53,951 [INFO] apscheduler.executors.default: Job "Position Monitor (5 min) (trigger: interval[0:05:00], next run at: 2026-03-23 13:12:52 CET)" executed successfully
+2026-03-23 14:07:03,932 [INFO] src.database: Database initialised at ./data\trades.db
+2026-03-23 14:07:03,936 [INFO] __main__: Initialising scheduler (schedule: 0 8,12,16 * * mon-fri, TZ: Europe/Berlin)
+2026-03-23 14:07:03,938 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 14:07:03,941 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 14:07:03,944 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 14:07:03,948 [INFO] apscheduler.scheduler: Added job "Daily Trading Routine" to job store "default"
+2026-03-23 14:07:03,951 [INFO] apscheduler.scheduler: Added job "Position Monitor (5 min)" to job store "default"
+2026-03-23 14:07:03,954 [INFO] apscheduler.scheduler: Added job "Daily Summary (20:00)" to job store "default"
+2026-03-23 14:07:03,956 [INFO] apscheduler.scheduler: Scheduler started
+2026-03-23 14:07:03,958 [INFO] __main__: Scheduler started. Next analysis: 2026-03-23 16:00:00+01:00 | Monitor: alle 5 Min | Summary: 20:00
+2026-03-23 14:07:03,960 [INFO] __main__: Running startup checks...
+2026-03-23 14:07:03,962 [INFO] __main__: ============================================================
+2026-03-23 14:07:03,965 [INFO] __main__: Daily routine started at 2026-03-23 14:07:03 CET
+2026-03-23 14:07:03,969 [INFO] __main__: ============================================================
+2026-03-23 14:07:04,656 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 14:07:04,660 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 14:07:04,759 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/accounts "HTTP/1.1 200 "
+2026-03-23 14:07:04,834 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 14:07:04,837 [INFO] __main__: Account: balance=954.29 EURd | equity=0.00 | open_positions=0
+2026-03-23 14:07:04,914 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/GOLD "HTTP/1.1 200 "
+2026-03-23 14:07:04,985 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/GOLD?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:07:05,054 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/SILVER "HTTP/1.1 200 "
+2026-03-23 14:07:05,123 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/SILVER?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:07:05,232 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/OIL_CRUDE "HTTP/1.1 200 "
+2026-03-23 14:07:05,336 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/OIL_CRUDE?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:07:05,404 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/NATURALGAS "HTTP/1.1 200 "
+2026-03-23 14:07:05,491 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/NATURALGAS?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:07:05,886 [INFO] httpx: HTTP Request: GET https://newsapi.org/v2/everything?q=oil+OR+gold+OR+silver+OR+gas+OR+commodities+OR+fed+OR+ecb+OR+tariff+OR+sanctions+OR+opec+OR+inflation+OR+recession&from=2026-03-22T13%3A07%3A05Z&language=en&sortBy=relevancy&pageSize=50&apiKey=db86d355e1084f33bb48287f1c617361 "HTTP/1.1 200 OK"
+2026-03-23 14:07:06,065 [INFO] src.analyzer: Requesting Claude market analysis (4 assets)...
+2026-03-23 14:07:08,151 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-03-23 14:07:34,633 [INFO] src.analyzer: Claude analysis received (tokens: 2231 in / 1335 out, cost: $0.0267)
+2026-03-23 14:07:34,754 [INFO] __main__: Analysis: recommendation=TRADE | best=GOLD BUY confidence=7 RR=2.37
+2026-03-23 14:07:34,758 [INFO] src.strategy: Signal validated: GOLD BUY confidence=7 RR=2.37
+2026-03-23 14:07:35,254 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 14:07:35,258 [INFO] src.notifier: Waiting for trade confirmation (timeout: 15 min)...
+2026-03-23 14:07:35,761 [INFO] httpx: HTTP Request: GET https://ntfy.sh/TradingBot/my-trading-bot-confirm/json?poll=1&since=1774271254 "HTTP/1.1 404 Not Found"
+2026-03-23 14:07:51,081 [INFO] httpx: HTTP Request: GET https://ntfy.sh/TradingBot/my-trading-bot-confirm/json?poll=1&since=1774271254 "HTTP/1.1 404 Not Found"
+2026-03-23 14:08:06,400 [INFO] httpx: HTTP Request: GET https://ntfy.sh/TradingBot/my-trading-bot-confirm/json?poll=1&since=1774271254 "HTTP/1.1 404 Not Found"
+2026-03-23 14:08:21,719 [INFO] httpx: HTTP Request: GET https://ntfy.sh/TradingBot/my-trading-bot-confirm/json?poll=1&since=1774271254 "HTTP/1.1 404 Not Found"
+2026-03-23 14:08:37,044 [INFO] httpx: HTTP Request: GET https://ntfy.sh/TradingBot/my-trading-bot-confirm/json?poll=1&since=1774271254 "HTTP/1.1 404 Not Found"
+2026-03-23 14:08:52,363 [INFO] httpx: HTTP Request: GET https://ntfy.sh/TradingBot/my-trading-bot-confirm/json?poll=1&since=1774271254 "HTTP/1.1 404 Not Found"
+2026-03-23 14:09:07,685 [INFO] httpx: HTTP Request: GET https://ntfy.sh/TradingBot/my-trading-bot-confirm/json?poll=1&since=1774271254 "HTTP/1.1 404 Not Found"
+2026-03-23 14:09:23,053 [INFO] httpx: HTTP Request: GET https://ntfy.sh/TradingBot/my-trading-bot-confirm/json?poll=1&since=1774271254 "HTTP/1.1 404 Not Found"
+2026-03-23 14:11:41,251 [INFO] src.database: Database initialised at ./data\trades.db
+2026-03-23 14:11:41,254 [INFO] __main__: Initialising scheduler (schedule: 0 8,12,16 * * mon-fri, TZ: Europe/Berlin)
+2026-03-23 14:11:41,258 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 14:11:41,261 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 14:11:41,264 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 14:11:41,267 [INFO] apscheduler.scheduler: Added job "Daily Trading Routine" to job store "default"
+2026-03-23 14:11:41,270 [INFO] apscheduler.scheduler: Added job "Position Monitor (5 min)" to job store "default"
+2026-03-23 14:11:41,272 [INFO] apscheduler.scheduler: Added job "Daily Summary (20:00)" to job store "default"
+2026-03-23 14:11:41,275 [INFO] apscheduler.scheduler: Scheduler started
+2026-03-23 14:11:41,277 [INFO] __main__: Scheduler started. Next analysis: 2026-03-23 16:00:00+01:00 | Monitor: alle 5 Min | Summary: 20:00
+2026-03-23 14:11:41,280 [INFO] __main__: Running startup checks...
+2026-03-23 14:11:41,282 [INFO] __main__: ============================================================
+2026-03-23 14:11:41,286 [INFO] __main__: Daily routine started at 2026-03-23 14:11:41 CET
+2026-03-23 14:11:41,289 [INFO] __main__: ============================================================
+2026-03-23 14:11:41,962 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 14:11:41,967 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 14:11:42,065 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/accounts "HTTP/1.1 200 "
+2026-03-23 14:11:42,147 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 14:11:42,151 [INFO] __main__: Account: balance=954.29 EURd | equity=0.00 | open_positions=0
+2026-03-23 14:11:42,227 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/GOLD "HTTP/1.1 200 "
+2026-03-23 14:11:42,317 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/GOLD?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:11:42,413 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/SILVER "HTTP/1.1 200 "
+2026-03-23 14:11:42,482 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/SILVER?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:11:42,546 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/OIL_CRUDE "HTTP/1.1 200 "
+2026-03-23 14:11:42,614 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/OIL_CRUDE?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:11:42,684 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/NATURALGAS "HTTP/1.1 200 "
+2026-03-23 14:11:42,751 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/NATURALGAS?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:11:43,186 [INFO] httpx: HTTP Request: GET https://newsapi.org/v2/everything?q=oil+OR+gold+OR+silver+OR+gas+OR+commodities+OR+fed+OR+ecb+OR+tariff+OR+sanctions+OR+opec+OR+inflation+OR+recession&from=2026-03-22T13%3A11%3A42Z&language=en&sortBy=relevancy&pageSize=50&apiKey=db86d355e1084f33bb48287f1c617361 "HTTP/1.1 200 OK"
+2026-03-23 14:11:43,382 [INFO] src.analyzer: Requesting Claude market analysis (4 assets)...
+2026-03-23 14:11:45,506 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-03-23 14:12:09,357 [INFO] src.analyzer: Claude analysis received (tokens: 2231 in / 1167 out, cost: $0.0242)
+2026-03-23 14:12:09,494 [INFO] __main__: Analysis: recommendation=TRADE | best=OIL_CRUDE SELL confidence=7 RR=2.20
+2026-03-23 14:12:09,498 [INFO] src.strategy: Signal validated: OIL_CRUDE SELL confidence=7 RR=2.20
+2026-03-23 14:12:10,069 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 14:12:10,074 [INFO] src.notifier: Waiting for trade confirmation (timeout: 15 min)...
+2026-03-23 14:12:10,566 [INFO] httpx: HTTP Request: GET https://ntfy.sh/my-trading-bot-confirm/json?poll=1&since=1774271529 "HTTP/1.1 200 OK"
+2026-03-23 14:12:26,345 [INFO] httpx: HTTP Request: GET https://ntfy.sh/my-trading-bot-confirm/json?poll=1&since=1774271529 "HTTP/1.1 200 OK"
+2026-03-23 14:12:41,910 [INFO] httpx: HTTP Request: GET https://ntfy.sh/my-trading-bot-confirm/json?poll=1&since=1774271529 "HTTP/1.1 200 OK"
+2026-03-23 14:12:41,915 [INFO] src.notifier: Trade confirmed by user
+2026-03-23 14:12:41,918 [INFO] __main__: Executing signal: OIL_CRUDE SELL size=38.17 entry=89.2500 SL=90.5000 TP=86.5000
+2026-03-23 14:12:42,218 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/OIL_CRUDE "HTTP/1.1 200 "
+2026-03-23 14:12:42,422 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 14:12:42,426 [INFO] src.broker: Position opened: epic=OIL_CRUDE direction=SELL size=38.17 deal_reference=o_ef970b42-56b0-4ae9-a54a-4553eb1e1215
+2026-03-23 14:12:42,627 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/confirms/o_ef970b42-56b0-4ae9-a54a-4553eb1e1215 "HTTP/1.1 200 "
+2026-03-23 14:12:42,724 [INFO] src.database: Trade saved with ID 1 (asset=OIL_CRUDE, direction=Direction.SELL)
+2026-03-23 14:12:42,729 [INFO] src.executor: Trade executed: OIL_CRUDE SELL 38.17 units @ 89.4840 | SL=90.5000 TP=86.5000 | deal_id=00018509-0055-311e-0000-0000824bc5b2
+2026-03-23 14:12:43,422 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 14:12:43,426 [INFO] __main__: Trade successfully opened: deal_id=00018509-0055-311e-0000-0000824bc5b2
+2026-03-23 14:12:43,548 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 14:12:43,615 [INFO] __main__: Daily routine completed
+2026-03-23 14:12:44,369 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 14:12:44,372 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 14:12:44,457 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 14:12:44,471 [WARNING] src.monitor: Broker-Position 00018509-0055-311e-0000-0000824bc5b3 (OIL_CRUDE) nicht in DB – bitte Bot neu starten oder manuell eintragen
+2026-03-23 14:12:44,540 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/OIL_CRUDE "HTTP/1.1 200 "
+2026-03-23 14:12:45,053 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 14:12:45,057 [INFO] __main__: Daily summary sent: 0 trades, P/L=0.00
+2026-03-23 14:16:41,275 [INFO] apscheduler.executors.default: Running job "Position Monitor (5 min) (trigger: interval[0:05:00], next run at: 2026-03-23 14:21:41 CET)" (scheduled at 2026-03-23 14:16:41.261292+01:00)
+2026-03-23 14:16:41,947 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 14:16:41,950 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 14:16:42,026 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 14:16:42,106 [WARNING] src.monitor: Broker-Position 00018509-0055-311e-0000-0000824bc5b3 (OIL_CRUDE) nicht in DB – bitte Bot neu starten oder manuell eintragen
+2026-03-23 14:16:42,172 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/OIL_CRUDE "HTTP/1.1 200 "
+2026-03-23 14:16:42,176 [INFO] apscheduler.executors.default: Job "Position Monitor (5 min) (trigger: interval[0:05:00], next run at: 2026-03-23 14:21:41 CET)" executed successfully
+2026-03-23 14:18:35,938 [INFO] src.database: Database initialised at ./data\trades.db
+2026-03-23 14:18:35,942 [INFO] __main__: Initialising scheduler (schedule: 0 8,12,16 * * mon-fri, TZ: Europe/Berlin)
+2026-03-23 14:18:35,943 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 14:18:35,948 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 14:18:35,951 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 14:18:35,953 [INFO] apscheduler.scheduler: Added job "Daily Trading Routine" to job store "default"
+2026-03-23 14:18:35,956 [INFO] apscheduler.scheduler: Added job "Position Monitor (5 min)" to job store "default"
+2026-03-23 14:18:35,959 [INFO] apscheduler.scheduler: Added job "Daily Summary (20:00)" to job store "default"
+2026-03-23 14:18:35,961 [INFO] apscheduler.scheduler: Scheduler started
+2026-03-23 14:18:35,964 [INFO] __main__: Scheduler started. Next analysis: 2026-03-23 16:00:00+01:00 | Monitor: alle 5 Min | Summary: 20:00
+2026-03-23 14:18:35,967 [INFO] __main__: Running startup checks...
+2026-03-23 14:18:35,970 [INFO] __main__: ============================================================
+2026-03-23 14:18:35,972 [INFO] __main__: Daily routine started at 2026-03-23 14:18:35 CET
+2026-03-23 14:18:35,975 [INFO] __main__: ============================================================
+2026-03-23 14:18:36,635 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 14:18:36,638 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 14:18:36,750 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/accounts "HTTP/1.1 200 "
+2026-03-23 14:18:36,834 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 14:18:36,839 [INFO] __main__: Account: balance=936.27 EURd | equity=0.00 | open_positions=1
+2026-03-23 14:18:36,926 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 14:18:36,996 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/OIL_CRUDE "HTTP/1.1 200 "
+2026-03-23 14:18:37,042 [INFO] src.database: Trade 1 closed – P/L: -22.25 (-0.65%)
+2026-03-23 14:18:37,045 [INFO] src.executor: Trade 1 auto-closed: STOPPED_OUT | P/L=-22.25 (-0.65%)
+2026-03-23 14:18:37,545 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 14:18:37,616 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/GOLD "HTTP/1.1 200 "
+2026-03-23 14:18:37,697 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/GOLD?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:18:37,793 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/SILVER "HTTP/1.1 200 "
+2026-03-23 14:18:37,862 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/SILVER?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:18:37,934 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/OIL_CRUDE "HTTP/1.1 200 "
+2026-03-23 14:18:38,001 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/OIL_CRUDE?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:18:38,070 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/NATURALGAS "HTTP/1.1 200 "
+2026-03-23 14:18:38,138 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/NATURALGAS?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:18:38,497 [INFO] httpx: HTTP Request: GET https://newsapi.org/v2/everything?q=oil+OR+gold+OR+silver+OR+gas+OR+commodities+OR+fed+OR+ecb+OR+tariff+OR+sanctions+OR+opec+OR+inflation+OR+recession&from=2026-03-22T13%3A18%3A38Z&language=en&sortBy=relevancy&pageSize=50&apiKey=db86d355e1084f33bb48287f1c617361 "HTTP/1.1 200 OK"
+2026-03-23 14:18:38,670 [INFO] src.analyzer: Requesting Claude market analysis (4 assets)...
+2026-03-23 14:18:40,622 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-03-23 14:19:11,928 [INFO] src.analyzer: Claude analysis received (tokens: 2254 in / 1524 out, cost: $0.0296)
+2026-03-23 14:19:12,020 [INFO] __main__: Analysis: recommendation=WAIT | best=OIL_CRUDE SELL confidence=7 RR=1.57
+2026-03-23 14:19:12,023 [INFO] __main__: Signal rejected: Recommendation is WAIT: Die bestehende OIL_CRUDE SELL-Position wird weiter gehalten – das Setup ist intakt (bearisher Trend, Bounce zu Widerstand ~90 USD). Kein neuer Trade wird heute eröffnet, da: (1) Gold und Silber nach extremen Intraday-Bewegungen überkauft sind – Einstieg zu riskant ohne Pullback; (2) Natural Gas bietet kein ausreichendes R/R; (3) Ein weiterer Öl-Short würde die Gesamtrisikoexposition erhöhen, während die bestehende Position noch im Minus ist. Maximales Tagesrisiko durch die offene Position bereits belastet. Fokus: Bestehende Öl-Short-Position managen und auf Schlusskurs um 88-87 USD hoffen.
+2026-03-23 14:19:12,763 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 14:19:13,557 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 14:19:13,561 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 14:19:13,640 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 14:19:13,660 [WARNING] src.monitor: Broker-Position 00018509-0055-311e-0000-0000824bc5b3 (OIL_CRUDE) nicht in DB – bitte Bot neu starten oder manuell eintragen
+2026-03-23 14:19:14,281 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 14:19:14,286 [INFO] __main__: Daily summary sent: 1 trades, P/L=-22.25
+2026-03-23 14:21:36,057 [INFO] src.database: Database initialised at ./data\trades.db
+2026-03-23 14:21:36,060 [INFO] __main__: Initialising scheduler (schedule: 0 8,12,16 * * mon-fri, TZ: Europe/Berlin)
+2026-03-23 14:21:36,063 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 14:21:36,066 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 14:21:36,078 [INFO] apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-03-23 14:21:36,081 [INFO] apscheduler.scheduler: Added job "Daily Trading Routine" to job store "default"
+2026-03-23 14:21:36,083 [INFO] apscheduler.scheduler: Added job "Position Monitor (5 min)" to job store "default"
+2026-03-23 14:21:36,085 [INFO] apscheduler.scheduler: Added job "Daily Summary (20:00)" to job store "default"
+2026-03-23 14:21:36,087 [INFO] apscheduler.scheduler: Scheduler started
+2026-03-23 14:21:36,090 [INFO] __main__: Scheduler started. Next analysis: 2026-03-23 16:00:00+01:00 | Monitor: alle 5 Min | Summary: 20:00
+2026-03-23 14:21:36,091 [INFO] __main__: Running startup checks...
+2026-03-23 14:21:36,094 [INFO] __main__: ============================================================
+2026-03-23 14:21:36,104 [INFO] __main__: Daily routine started at 2026-03-23 14:21:36 CET
+2026-03-23 14:21:36,107 [INFO] __main__: ============================================================
+2026-03-23 14:21:36,792 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 14:21:36,810 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 14:21:36,908 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/accounts "HTTP/1.1 200 "
+2026-03-23 14:21:36,996 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 14:21:36,999 [INFO] __main__: Account: balance=919.92 EURd | equity=0.00 | open_positions=0
+2026-03-23 14:21:37,091 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/GOLD "HTTP/1.1 200 "
+2026-03-23 14:21:37,162 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/GOLD?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:21:37,246 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/SILVER "HTTP/1.1 200 "
+2026-03-23 14:21:37,314 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/SILVER?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:21:37,384 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/OIL_CRUDE "HTTP/1.1 200 "
+2026-03-23 14:21:37,453 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/OIL_CRUDE?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:21:37,520 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/markets/NATURALGAS "HTTP/1.1 200 "
+2026-03-23 14:21:37,590 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/prices/NATURALGAS?resolution=HOUR&max=48 "HTTP/1.1 200 "
+2026-03-23 14:21:37,968 [INFO] httpx: HTTP Request: GET https://newsapi.org/v2/everything?q=oil+OR+gold+OR+silver+OR+gas+OR+commodities+OR+fed+OR+ecb+OR+tariff+OR+sanctions+OR+opec+OR+inflation+OR+recession&from=2026-03-22T13%3A21%3A37Z&language=en&sortBy=relevancy&pageSize=50&apiKey=db86d355e1084f33bb48287f1c617361 "HTTP/1.1 200 OK"
+2026-03-23 14:21:38,146 [INFO] src.analyzer: Requesting Claude market analysis (4 assets)...
+2026-03-23 14:21:39,997 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-03-23 14:22:12,477 [INFO] src.analyzer: Claude analysis received (tokens: 2231 in / 1620 out, cost: $0.0310)
+2026-03-23 14:22:12,581 [INFO] __main__: Analysis: recommendation=WAIT | best=OIL_CRUDE SELL confidence=7 RR=1.02
+2026-03-23 14:22:12,584 [INFO] __main__: Signal rejected: Recommendation is WAIT: Das Öl-Short-Setup hat rechnerisch nur eine Risk/Reward-Ratio von ~1.02 (Risiko 2.54 USD vs. Ziel 2.60 USD), was die Mindestanforderung von 1:1.5 nicht erfüllt. Der Stop bei 92.99 ist notwendig um über dem Bounce-Hoch zu liegen, was das Setup zu eng macht. Bei der aktuellen extremen Intraday-Volatilität in allen Assets besteht erhöhtes Risiko von Fehlausbrüchen. Gold und Silber haben klare Richtungsimpulse bereits hinter sich und bieten kein sauberes Intraday-Setup mehr. Naturgas konsolidiert ohne klaren Impuls. Empfehlung: Beobachten und auf klareres Setup mit besserem Risk/Reward warten, idealerweise am nächsten Handelstag oder bei Konsolidierung nahe klarer Unterstützungs-/Widerstandsniveaus.
+2026-03-23 14:22:13,291 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 14:22:14,081 [INFO] httpx: HTTP Request: POST https://demo-api-capital.backend-capital.com/api/v1/session "HTTP/1.1 200 "
+2026-03-23 14:22:14,085 [INFO] src.broker: Capital.com session created (demo=True)
+2026-03-23 14:22:14,163 [INFO] httpx: HTTP Request: GET https://demo-api-capital.backend-capital.com/api/v1/positions "HTTP/1.1 200 "
+2026-03-23 14:22:14,674 [INFO] httpx: HTTP Request: POST https://ntfy.sh/TradingBot/my-trading-bot-alerts "HTTP/1.1 200 OK"
+2026-03-23 14:22:14,679 [INFO] __main__: Daily summary sent: 1 trades, P/L=-22.25
