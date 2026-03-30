@@ -252,6 +252,11 @@ hr.div { border: none; border-top: 1px solid var(--border-dim); margin: 20px 0; 
 }
 .f-field input:focus, .f-field select:focus { border-color: var(--green); }
 .f-field select option { background: var(--bg3); }
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.75) sepia(1) saturate(2) hue-rotate(100deg);
+  cursor: pointer; opacity: 0.8; border-radius: 3px;
+}
+input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
 
 .settings-section-title { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--green); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
 
@@ -563,9 +568,9 @@ hr.div { border: none; border-top: 1px solid var(--border-dim); margin: 20px 0; 
             <input type="number" id="sim-conf" value="8" min="1" max="10">
           </div>
           <div class="f-field">
-            <label>Start-Datum (leer = alle)</label>
+            <label for="sim-start">Start-Datum (leer = alle)</label>
             <input type="date" id="sim-start">
-            <label style="margin-top:8px;">End-Datum</label>
+            <label for="sim-end" style="margin-top:8px;">End-Datum</label>
             <input type="date" id="sim-end">
           </div>
         </div>
@@ -1536,9 +1541,12 @@ async function startSim() {
     document.getElementById('sim-trades-card').style.display = 'none';
     document.getElementById('sim-start-btn').style.display = 'none';
     document.getElementById('sim-cancel-btn').style.display = '';
-    document.getElementById('sim-live-capital-row').style.display = 'none';
-    document.getElementById('sim-live-open-list').innerHTML  = '<div class="empty" style="padding:6px 0;font-size:11px;">—</div>';
-    document.getElementById('sim-live-closed-list').innerHTML = '<div class="empty" style="padding:6px 0;font-size:11px;">—</div>';
+    const _cr = document.getElementById('sim-live-capital-row');
+    if (_cr) _cr.style.display = 'none';
+    const _ol = document.getElementById('sim-live-open-list');
+    if (_ol) _ol.innerHTML = '<div class="empty" style="padding:6px 0;font-size:11px;">—</div>';
+    const _cl = document.getElementById('sim-live-closed-list');
+    if (_cl) _cl.innerHTML = '<div class="empty" style="padding:6px 0;font-size:11px;">—</div>';
     startSimPoll();
   } catch(e) {
     addSimLog('err', 'Start fehlgeschlagen: ' + e.message);
@@ -1572,12 +1580,13 @@ async function pollSimProgress() {
 
     // Live Kapital
     if (p.current_capital != null) {
-      document.getElementById('sim-live-capital-row').style.display = '';
-      setText('sim-live-capital-val', eur(p.current_capital));
+      const capRow = document.getElementById('sim-live-capital-row');
+      if (capRow) { capRow.style.display = ''; setText('sim-live-capital-val', eur(p.current_capital)); }
     }
 
     // Live Trade-Listen
-    renderSimLiveTrades(p.open_trades_snap || [], p.closed_trades_snap || []);
+    try { renderSimLiveTrades(p.open_trades_snap || [], p.closed_trades_snap || []); }
+    catch(re) { console.warn('renderSimLiveTrades:', re); }
 
     if (!d.running && d.result) {
       clearInterval(_simPollInterval);
