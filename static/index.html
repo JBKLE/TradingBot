@@ -6,6 +6,8 @@
 <title>TradingBot</title>
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
 /* ─── RESET ──────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -212,6 +214,7 @@ hr.div { border: none; border-top: 1px solid var(--border-dim); margin: 20px 0; 
 .tbl td { padding: 9px 10px; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,.03); font-family: 'Share Tech Mono', monospace; }
 .tbl tr:last-child td { border-bottom: none; }
 .tbl tr:hover td { background: rgba(255,255,255,.02); }
+.tbl tr.chart-hover td { background: rgba(245,197,66,0.08); cursor: default; }
 .cl { color: var(--green); }
 .cs { color: var(--red); }
 .pp { color: var(--green); }
@@ -682,7 +685,12 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
 
       <!-- Sim Chart -->
       <div class="card mb14" id="sim-chart-card" style="display:none;">
-        <div class="card-hd"><span class="card-title">Equity Kurve</span><span class="badge badge-b" id="sim-chart-badge">—</span></div>
+        <div class="card-hd">
+          <span class="card-title">Equity Kurve</span>
+          <span class="badge badge-b" id="sim-chart-badge">—</span>
+          <span style="font-size:10px;color:var(--text-dim);margin-left:auto;margin-right:8px;">Scrollen = Zoom · Drag = Pan</span>
+          <button class="btn btn-ghost btn-sm" id="sim-chart-reset-zoom" style="display:none" onclick="if(simChart){simChart.resetZoom();this.style.display='none';}">↺ Reset</button>
+        </div>
         <div class="chart-wrap h300"><canvas id="simChart"></canvas></div>
       </div>
 
@@ -951,10 +959,24 @@ function renderPLChart(labels, values) {
   });
 }
 
+let _simHoverIdx = null;
+
+function simChartHighlight(idx, rowEl) {
+  _simHoverIdx = (idx == null) ? null : Number(idx);
+  if (simChart) simChart.update('none');
+  // Highlight table row
+  document.querySelectorAll('.tbl tr.chart-hover').forEach(r => r.classList.remove('chart-hover'));
+  if (rowEl) rowEl.classList.add('chart-hover');
+}
+
 function renderSimChart(labels, values, tpPts, slPts, isCapital) {
   tpPts    = tpPts    || [];
   slPts    = slPts    || [];
   isCapital = !!isCapital;
+  _simHoverIdx = null;
+  const resetBtn = document.getElementById('sim-chart-reset-zoom');
+  if (resetBtn) resetBtn.style.display = 'none';
+
   const ctx = getOrCreate('simChart');
 
   const yFmt = v => isCapital
@@ -967,7 +989,11 @@ function renderSimChart(labels, values, tpPts, slPts, isCapital) {
       data: values,
       borderColor: '#3b82f6', borderWidth: 2,
       backgroundColor: 'rgba(59,130,246,0.07)', fill: true, tension: 0.3,
-      pointRadius: 0, pointHoverRadius: 4, pointBackgroundColor: '#3b82f6',
+      pointRadius:          ctx => ctx.dataIndex === _simHoverIdx ? 9 : 0,
+      pointHoverRadius:     ctx => ctx.dataIndex === _simHoverIdx ? 11 : 4,
+      pointBackgroundColor: ctx => ctx.dataIndex === _simHoverIdx ? '#f5c542' : '#3b82f6',
+      pointBorderColor:     ctx => ctx.dataIndex === _simHoverIdx ? '#fff' : '#3b82f6',
+      pointBorderWidth:     ctx => ctx.dataIndex === _simHoverIdx ? 2 : 0,
       order: 3,
     }
   ];
@@ -996,6 +1022,18 @@ function renderSimChart(labels, values, tpPts, slPts, isCapital) {
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: {
+        zoom: {
+          zoom: {
+            wheel: { enabled: true, speed: 0.08 },
+            pinch: { enabled: true },
+            mode: 'x',
+            onZoomComplete: () => {
+              const btn = document.getElementById('sim-chart-reset-zoom');
+              if (btn) btn.style.display = '';
+            }
+          },
+          pan: { enabled: true, mode: 'x' },
+        },
         legend: {
           display: hasMarkers,
           labels: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' }, boxWidth: 8, padding: 12 }
@@ -1789,7 +1827,9 @@ function renderTradeTable(reset) {
   const tl     = _simTradesFull;
   const hasEur = tl[0]?.netto_pnl_eur != null;
   const end    = Math.min(_simTradesShown + SIM_TRADES_PAGE, tl.length);
-  const rows   = tl.slice(_simTradesShown, end).map(t => `<tr>
+  const rows   = tl.slice(_simTradesShown, end).map((t, si) => {
+    const chartIdx = _simTradesShown + si + 1; // +1: equity[0] = Startkapital
+    return `<tr onmouseenter="simChartHighlight(${chartIdx},this)" onmouseleave="simChartHighlight(null,null)">
     <td>${ts2date(t.entry_ts)}</td>
     <td>${t.asset}</td>
     <td class="${t.direction==='BUY'||t.direction==='long'?'cl':'cs'}">${t.direction==='BUY'||t.direction==='long'?'▲ LONG':'▼ SHORT'}</td>
@@ -1800,7 +1840,8 @@ function renderTradeTable(reset) {
     <td style="color:var(--yellow)">${t.confidence!=null?t.confidence+'/10':'—'}</td>
     ${hasEur?`<td class="${(t.netto_pnl_eur||0)>=0?'pp':'pn'}">${eur(t.netto_pnl_eur)}</td>`:''}
     <td style="font-size:10px;color:var(--text-dim)">${t.status}</td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
 
   if (reset) {
     document.getElementById('sim-trades-body').innerHTML = `
