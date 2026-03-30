@@ -177,7 +177,7 @@ hr.div { border: none; border-top: 1px solid var(--border-dim); margin: 20px 0; 
 .api-list { display: flex; flex-direction: column; gap: 8px; }
 .api-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--bg3); border-radius: var(--r); border: 1px solid var(--border-dim); }
 .api-name { flex: 1; font-size: 12px; }
-.api-lat { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--text-dim); }
+.api-lat { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--text-dim); min-width: 52px; text-align: right; }
 .api-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .api-dot.ok { background: var(--green); box-shadow: 0 0 5px var(--green); }
 .api-dot.warn { background: var(--yellow); box-shadow: 0 0 5px var(--yellow); }
@@ -937,25 +937,34 @@ async function loadDashboard() {
     setBotRunning(botStatus.running);
 
     // KPIs
-    const b = status.balance;
+    const b    = status.balance;
+    const eq   = status.equity;
+    const cur  = status.currency || 'EUR';
     const perf = status.performance || {};
-    setText('dash-balance', b != null ? eur(b) : '—');
-    setText('dash-equity', status.equity != null ? eur(status.equity) : eur(b));
+
+    const fmt = v => v == null ? '—'
+      : cur + ' ' + Number(v).toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+    setText('dash-balance', b != null && b !== 0 ? fmt(b) : '—');
+    setText('dash-equity',  eq != null && eq !== 0 ? fmt(eq) : (b ? fmt(b) : '—'));
+
     const plToday = perf.pl_today ?? 0;
-    setText('dash-pl-today', eur(plToday));
+    setText('dash-pl-today', fmt(plToday));
     setClass('dash-pl-today', plToday >= 0 ? 'kpi-val' : 'kpi-val red');
-    setText('dash-pl-today-d', plToday ? pct(plToday / (b - plToday) * 100) : '');
+    const plPct = b && b !== plToday ? plToday / (b - plToday) * 100 : null;
+    setText('dash-pl-today-d', plPct != null ? pct(plPct) : '');
     setClass('dash-pl-today-d', 'kpi-delta ' + (plToday >= 0 ? 'pos' : 'neg'));
-    setText('dash-open', status.open_trades ?? '—');
+
+    setText('dash-open',     status.open_trades ?? '—');
     setText('dash-open-sub', `Max. ${perf.max_open_positions ?? 4} gleichzeitig`);
 
     // Performance
-    setText('dp-wr', perf.win_rate != null ? perf.win_rate.toFixed(1) + '%' : '—');
-    setText('dp-trades', perf.total_trades ?? '—');
-    setText('dp-pf', perf.profit_factor != null ? perf.profit_factor.toFixed(2) : '—');
-    setText('dp-dd', perf.max_drawdown_pct != null ? pct(-Math.abs(perf.max_drawdown_pct)) : '—');
-    setText('dp-conf', perf.avg_confidence != null ? perf.avg_confidence.toFixed(1) + '/10' : '—');
-    setText('dp-today', status.trades_today ?? '—');
+    setText('dp-wr',     perf.win_rate      != null ? perf.win_rate.toFixed(1) + '%'        : '—');
+    setText('dp-trades', perf.total_trades  ?? '—');
+    setText('dp-pf',     perf.profit_factor != null ? perf.profit_factor.toFixed(2)          : '—');
+    setText('dp-dd',     perf.max_drawdown_pct != null ? pct(-Math.abs(perf.max_drawdown_pct)) : '—');
+    setText('dp-conf',   perf.avg_confidence != null ? perf.avg_confidence.toFixed(1) + '/10' : '—');
+    setText('dp-today',  status.trades_today ?? '—');
 
     // Mode badge
     const modeBadge = document.getElementById('dash-mode');
@@ -1003,30 +1012,49 @@ const API_CHECKS = [
   { key: 'ntfy',    label: 'ntfy.sh', endpoint: '/api/test/ntfy' },
 ];
 
-async function checkApis() {
+function _renderApiRows() {
   const list = document.getElementById('apiStatusList');
   list.innerHTML = API_CHECKS.map(c =>
     `<div class="api-row" id="api-row-${c.key}">
       <div class="api-dot pending" id="api-dot-${c.key}"></div>
       <span class="api-name">${c.label}</span>
-      <span class="api-lat" id="api-lat-${c.key}"><div class="spinner"></div></span>
+      <span class="api-lat" id="api-lat-${c.key}"></span>
+      <button class="btn btn-ghost btn-sm" id="api-btn-${c.key}" onclick="checkSingleApi('${c.key}')">Prüfen</button>
     </div>`
   ).join('');
-  document.getElementById('apiCheckTs').textContent = 'Prüfe...';
+}
 
+async function _runApiCheck(c) {
+  document.getElementById('api-dot-' + c.key).className = 'api-dot pending';
+  document.getElementById('api-lat-' + c.key).innerHTML = '<div class="spinner"></div>';
+  document.getElementById('api-btn-' + c.key).disabled = true;
+  try {
+    const d = await apiFetch(c.endpoint, { method: 'POST' });
+    const ok = d.status === 'ok';
+    document.getElementById('api-dot-' + c.key).className = 'api-dot ' + (ok ? 'ok' : 'warn');
+    document.getElementById('api-lat-' + c.key).textContent = d.latency_ms != null ? d.latency_ms + ' ms' : '';
+    document.getElementById('api-row-' + c.key).title = d.message || '';
+  } catch {
+    document.getElementById('api-dot-' + c.key).className = 'api-dot err';
+    document.getElementById('api-lat-' + c.key).textContent = 'Fehler';
+  } finally {
+    document.getElementById('api-btn-' + c.key).disabled = false;
+  }
+}
+
+async function checkSingleApi(key) {
+  const c = API_CHECKS.find(x => x.key === key);
+  if (!c) return;
+  await _runApiCheck(c);
+  document.getElementById('apiCheckTs').textContent =
+    'Geprüft: ' + new Date().toLocaleTimeString('de-DE');
+}
+
+async function checkApis() {
+  _renderApiRows();
+  document.getElementById('apiCheckTs').textContent = 'Prüfe...';
   for (const c of API_CHECKS) {
-    try {
-      const d = await apiFetch(c.endpoint, { method: 'POST' });
-      const ok = d.status === 'ok';
-      document.getElementById('api-dot-' + c.key).className = 'api-dot ' + (ok ? 'ok' : 'warn');
-      document.getElementById('api-lat-' + c.key).textContent = d.latency_ms != null ? d.latency_ms + ' ms' : '';
-      // Show message as tooltip title
-      const row = document.getElementById('api-row-' + c.key);
-      row.title = d.message || '';
-    } catch {
-      document.getElementById('api-dot-' + c.key).className = 'api-dot err';
-      document.getElementById('api-lat-' + c.key).textContent = 'Fehler';
-    }
+    await _runApiCheck(c);
   }
   document.getElementById('apiCheckTs').textContent =
     'Geprüft: ' + new Date().toLocaleTimeString('de-DE');
@@ -1347,9 +1375,11 @@ async function startSim() {
 
   // Financial
   const finOn = document.getElementById('sim-fin-toggle').checked;
+  const modelPath = document.getElementById('sim-model').value || null;
   const body = {
     assets, confidence_threshold: conf,
     start_date: start, end_date: end,
+    model_path: modelPath,
     input_db: inputDb, output_db: outputDb,
   };
   if (finOn) {
@@ -1366,7 +1396,8 @@ async function startSim() {
       switchLog('sim');
       return;
     }
-    addSimLog('ok', `Simulation gestartet · Assets: ${assets?.join(',')||'alle'} · Conf ≥ ${conf} · DB-In: ${inputDb||'default'} · DB-Out: ${outputDb||'default'}`);
+    const modelName = modelPath ? modelPath.split('/').pop().split('\\').pop() : 'neuestes Modell';
+    addSimLog('ok', `Simulation gestartet · Modell: ${modelName} · Assets: ${assets?.join(',')||'alle'} · Conf ≥ ${conf} · DB-In: ${inputDb||'default'} · DB-Out: ${outputDb||'default'}`);
     if (finOn) addSimLog('ok', `Finanzrechnung: ${body.capital}€ · Risiko ${(body.risk_pct*100).toFixed(1)}% · Hebel ${body.leverage}`);
     switchLog('sim');
     document.getElementById('sim-progress-wrap').style.display = '';

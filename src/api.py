@@ -36,16 +36,34 @@ def create_api() -> FastAPI:
     # ── GET /api/status ─────────────────────────────────────────────────
     @app.get("/api/status")
     async def get_status():
-        """Bot-Status: Kontostand, offene Positionen, naechste Analyse."""
+        """Bot-Status: Kontostand live von Capital.com, offene Positionen, Performance."""
         try:
-            balance = await database.get_latest_balance()
             open_trades = await database.get_open_trades()
             trades_today = await database.get_trades_today()
             analyses_today = await database.get_analyses_today()
             stats = await database.get_performance_stats()
+
+            # Kontostand live von Capital.com holen
+            balance: float | None = None
+            equity: float | None = None
+            currency: str = "EUR"
+            demo: bool = config.CAPITAL_DEMO
+            try:
+                async with CapitalComBroker() as broker:
+                    account = await broker.get_account_balance()
+                    balance = account.balance
+                    equity = getattr(account, "equity", account.balance)
+                    currency = getattr(account, "currency", "EUR")
+            except Exception as broker_exc:
+                logger.warning("Capital.com Kontostand nicht abrufbar: %s – nutze Snapshot", broker_exc)
+                balance = await database.get_latest_balance()
+
             return {
                 "status": "running",
                 "balance": balance,
+                "equity": equity,
+                "currency": currency,
+                "demo": demo,
                 "open_trades": len(open_trades),
                 "trades_today": len(trades_today),
                 "analyses_today": len(analyses_today),
@@ -677,6 +695,8 @@ def create_api() -> FastAPI:
         end_date: str | None = None
         assets: list[str] | None = None
         confidence_threshold: int = 8
+        # Explicit model path (None = auto-select latest)
+        model_path: str | None = None
         # Financial params (None = no financial tracking)
         capital:  float | None = None
         risk_pct: float | None = None
@@ -712,9 +732,21 @@ def create_api() -> FastAPI:
         input_db_path  = _resolve_db(body.input_db,  HISTORY_DB_PATH)
         output_db_path = _resolve_db(body.output_db, HISTORY_DB_PATH)
 
+        # Validate explicit model path if given
+        explicit_model: str | None = None
+        if body.model_path:
+            mp = body.model_path
+            if not os.path.isabs(mp):
+                mp = os.path.join(config.AI_MODELS_DIR, mp)
+            if os.path.exists(mp):
+                explicit_model = mp
+            else:
+                logger.warning("Angegebenes Modell nicht gefunden: %s – nehme neuestes", mp)
+
         sim = TimelineSimulator(
             db_path=input_db_path,
             confidence_threshold=body.confidence_threshold,
+            model_path=explicit_model,
             capital=body.capital,
             risk_pct=body.risk_pct,
             leverage=body.leverage,

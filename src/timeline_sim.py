@@ -47,6 +47,7 @@ class TimelineSimulator:
         self,
         db_path: str = HISTORY_DB_PATH,
         confidence_threshold: int = DEFAULT_CONFIDENCE_THRESHOLD,
+        model_path: str | None = None,
         models_dir: str | None = None,
         # Financial simulation parameters (None = no financial tracking)
         capital: float | None = None,
@@ -59,6 +60,7 @@ class TimelineSimulator:
         self.db_path = db_path
         self.output_db_path = output_db_path or db_path
         self.confidence_threshold = confidence_threshold
+        self._explicit_model_path = model_path  # wenn gesetzt, wird genau dieses Modell geladen
         self._models_dir = models_dir or config.AI_MODELS_DIR
         self._device = self._resolve_device()
         self._net: DuelingDQN | None = None
@@ -96,7 +98,7 @@ class TimelineSimulator:
     def _load_model(self) -> DuelingDQN:
         if self._net is not None:
             return self._net
-        path = _get_latest_model_path(self._models_dir)
+        path = self._explicit_model_path or _get_latest_model_path(self._models_dir)
         self.model_path = path
         logger.info("Timeline sim: loading model %s (device=%s)", path, self._device)
         net = DuelingDQN(ACTION_SIZE).to(self._device)
