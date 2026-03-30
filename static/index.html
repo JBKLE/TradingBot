@@ -1670,30 +1670,69 @@ function showSimResults(r) {
 
   // Trade table
   if (tl.length) {
+    _simTradesFull = tl;
     document.getElementById('sim-trades-card').style.display = '';
     setText('sim-trades-count', tl.length + ' Trades');
-    document.getElementById('sim-trades-body').innerHTML = `
-      <div style="overflow-x:auto;">
-      <table class="tbl"><thead><tr>
-        <th>Datum</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
-        <th>Ausstieg</th><th>PnL Pkt.</th><th>R</th>
-        ${tl[0]?.netto_pnl_eur!=null?'<th>Netto €</th>':''}
-        <th>Status</th>
-      </tr></thead><tbody>
-      ${tl.slice(0,50).map(t => `<tr>
-        <td>${ts2date(t.entry_ts)}</td>
-        <td>${t.asset}</td>
-        <td class="${t.direction==='BUY'||t.direction==='long'?'cl':'cs'}">${t.direction==='BUY'||t.direction==='long'?'▲ LONG':'▼ SHORT'}</td>
-        <td>${t.entry_price?.toFixed(2)??'—'}</td>
-        <td>${t.exit_price?.toFixed(2)??'—'}</td>
-        <td class="${(t.pnl||0)>=0?'pp':'pn'}">${t.pnl!=null?t.pnl.toFixed(4):'—'}</td>
-        <td class="${(t.r_multiple||0)>=0?'pp':'pn'}">${t.r_multiple!=null?t.r_multiple.toFixed(2)+'R':'—'}</td>
-        ${t.netto_pnl_eur!=null?`<td class="${t.netto_pnl_eur>=0?'pp':'pn'}">${eur(t.netto_pnl_eur)}</td>`:''}
-        <td style="font-size:10px;color:var(--text-dim)">${t.status}</td>
-      </tr>`).join('')}
-      </tbody></table></div>
-      ${tl.length>50?`<div style="text-align:center;padding:8px;font-size:11px;color:var(--text-dim)">... ${tl.length-50} weitere Trades</div>`:''}`;
+    renderTradeTable(true);
   }
+}
+
+/* ─── TRADE TABLE (paginiert) ────────────────────────────── */
+let _simTradesFull  = [];
+let _simTradesShown = 0;
+const SIM_TRADES_PAGE = 50;
+
+function renderTradeTable(reset) {
+  if (reset) _simTradesShown = 0;
+  const tl     = _simTradesFull;
+  const hasEur = tl[0]?.netto_pnl_eur != null;
+  const end    = Math.min(_simTradesShown + SIM_TRADES_PAGE, tl.length);
+  const rows   = tl.slice(_simTradesShown, end).map(t => `<tr>
+    <td>${ts2date(t.entry_ts)}</td>
+    <td>${t.asset}</td>
+    <td class="${t.direction==='BUY'||t.direction==='long'?'cl':'cs'}">${t.direction==='BUY'||t.direction==='long'?'▲ LONG':'▼ SHORT'}</td>
+    <td>${t.entry_price?.toFixed(2)??'—'}</td>
+    <td>${t.exit_price?.toFixed(2)??'—'}</td>
+    <td class="${(t.pnl||0)>=0?'pp':'pn'}">${t.pnl!=null?t.pnl.toFixed(4):'—'}</td>
+    <td class="${(t.r_multiple||0)>=0?'pp':'pn'}">${t.r_multiple!=null?t.r_multiple.toFixed(2)+'R':'—'}</td>
+    <td style="color:var(--yellow)">${t.confidence!=null?t.confidence+'/10':'—'}</td>
+    ${hasEur?`<td class="${(t.netto_pnl_eur||0)>=0?'pp':'pn'}">${eur(t.netto_pnl_eur)}</td>`:''}
+    <td style="font-size:10px;color:var(--text-dim)">${t.status}</td>
+  </tr>`).join('');
+
+  if (reset) {
+    document.getElementById('sim-trades-body').innerHTML = `
+      <div style="max-height:460px;overflow-y:auto;" id="sim-trades-scroll">
+        <div style="overflow-x:auto;">
+          <table class="tbl"><thead><tr>
+            <th>Datum</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
+            <th>Ausstieg</th><th>PnL Pkt.</th><th>R</th><th>Conf</th>
+            ${hasEur?'<th>Netto €</th>':''}
+            <th>Status</th>
+          </tr></thead><tbody id="sim-trades-tbody"></tbody></table>
+        </div>
+      </div>
+      <div id="sim-trades-more" style="display:none;padding:10px;display:flex;align-items:center;justify-content:center;gap:12px;">
+        <button class="btn btn-ghost btn-sm" onclick="loadMoreSimTrades()">Weitere laden…</button>
+        <span id="sim-trades-more-info" style="font-size:11px;color:var(--text-dim);"></span>
+      </div>`;
+  }
+
+  document.getElementById('sim-trades-tbody').insertAdjacentHTML('beforeend', rows);
+  _simTradesShown = end;
+
+  const remaining = tl.length - _simTradesShown;
+  const moreEl    = document.getElementById('sim-trades-more');
+  if (remaining > 0) {
+    moreEl.style.display = 'flex';
+    setText('sim-trades-more-info', `${_simTradesShown} von ${tl.length} · noch ${remaining}`);
+  } else {
+    moreEl.style.display = 'none';
+  }
+}
+
+function loadMoreSimTrades() {
+  renderTradeTable(false);
 }
 
 /* ─── SIMULATION HISTORY ──────────────────────────────────── */
