@@ -795,7 +795,13 @@ async function apiFetch(path, opts = {}) {
 const eur = v => v == null ? '—' : '€ ' + Number(v).toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2});
 const pct = v => v == null ? '—' : (v >= 0 ? '+' : '') + Number(v).toFixed(2) + ' %';
 const ts2time = ts => ts ? new Date(ts).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}) : '—';
-const ts2date = ts => ts ? new Date(ts).toLocaleDateString('de-DE') : '—';
+const ts2date = ts => {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return isNaN(d) ? String(ts).slice(0,16)
+    : d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'})
+      + ' ' + d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+};
 
 /* ─── SIDEBAR ─────────────────────────────────────────────── */
 function toggleSidebar() {
@@ -940,16 +946,87 @@ function renderPLChart(labels, values) {
   });
 }
 
-function renderSimChart(labels, values) {
+function renderSimChart(labels, values, tpPts, slPts, isCapital) {
+  tpPts    = tpPts    || [];
+  slPts    = slPts    || [];
+  isCapital = !!isCapital;
   const ctx = getOrCreate('simChart');
+
+  const yFmt = v => isCapital
+    ? '€\u202f' + Number(v).toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2})
+    : Number(v).toFixed(4);
+
+  const datasets = [
+    {
+      label: isCapital ? 'Kapital' : 'Kum. PnL',
+      data: values,
+      borderColor: '#3b82f6', borderWidth: 2,
+      backgroundColor: 'rgba(59,130,246,0.07)', fill: true, tension: 0.3,
+      pointRadius: 0, pointHoverRadius: 4, pointBackgroundColor: '#3b82f6',
+      order: 3,
+    }
+  ];
+  if (tpPts.length) datasets.push({
+    label: 'TP',
+    type: 'scatter',
+    data: tpPts,
+    pointRadius: 5, pointHoverRadius: 7,
+    backgroundColor: 'rgba(0,255,65,0.85)', borderColor: 'rgba(0,255,65,0.4)', borderWidth: 1,
+    order: 1,
+  });
+  if (slPts.length) datasets.push({
+    label: 'SL',
+    type: 'scatter',
+    data: slPts,
+    pointRadius: 5, pointHoverRadius: 7,
+    backgroundColor: 'rgba(255,59,59,0.85)', borderColor: 'rgba(255,59,59,0.4)', borderWidth: 1,
+    order: 2,
+  });
+
+  const hasMarkers = tpPts.length > 0 || slPts.length > 0;
+
   simChart = new Chart(ctx, {
     type: 'line',
-    data: { labels, datasets: [{ data: values, borderColor: '#3b82f6', borderWidth: 2,
-      backgroundColor: 'rgba(59,130,246,0.06)', fill: true, tension: 0.3,
-      pointRadius: 0, pointHoverRadius: 4, pointBackgroundColor: '#3b82f6' }] },
-    options: { ...CHART_DEFAULTS, scales: { ...CHART_DEFAULTS.scales,
-      y: { ...CHART_DEFAULTS.scales.y, ticks: { ...CHART_DEFAULTS.scales.y.ticks,
-        callback: v => '€ ' + Number(v).toLocaleString('de-DE', {maximumFractionDigits:0}) }}}}
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: hasMarkers,
+          labels: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' }, boxWidth: 8, padding: 12 }
+        },
+        tooltip: {
+          backgroundColor: '#18232e', borderColor: 'rgba(0,255,65,0.3)', borderWidth: 1,
+          titleColor: '#c9d1d9', bodyColor: '#00ff41',
+          callbacks: {
+            title: items => {
+              const idx = items[0].dataIndex;
+              const raw = items[0].raw;
+              // Scatter: x is label string; line: use labels array
+              return typeof raw === 'object' && raw.x ? raw.x : (labels[idx] || '');
+            },
+            label: item => {
+              const raw = item.raw;
+              const v   = typeof raw === 'object' ? raw.y : raw;
+              const base = `${item.dataset.label}: ${yFmt(v)}`;
+              if (typeof raw === 'object' && raw.asset)
+                return `${base}  ·  ${raw.asset} ${raw.dir}  conf ${raw.conf}`;
+              return base;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          ticks: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' }, maxTicksLimit: 8, maxRotation: 0 }
+        },
+        y: {
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          ticks: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' }, callback: yFmt }
+        }
+      }
+    }
   });
 }
 
@@ -1648,24 +1725,40 @@ function showSimResults(r) {
       ${fin.margin_call?'<div class="notif err" style="margin-top:10px;">MARGIN CALL – Kapital aufgebraucht</div>':''}`;
   }
 
-  // Equity curve from equity_curve or trade_list
-  const eq = fin.equity_curve || [];
+  // Equity curve – immer aus trade_list mit echten Timestamps aufbauen
   const tl = r.trade_list || [];
-  if (eq.length > 1 || tl.length > 1) {
+  if (tl.length > 0) {
     document.getElementById('sim-chart-card').style.display = '';
-    const label = `${(r.start_ts||'').slice(0,10)} – ${(r.end_ts||'').slice(0,10)}`;
-    setText('sim-chart-badge', label);
-    if (eq.length > 1) {
-      const step = Math.max(1, Math.floor(eq.length / 300));
-      const pts  = eq.filter((_,i) => i % step === 0);
-      const vals = pts.map(p => typeof p === 'object' ? (p.equity ?? p) : p);
-      renderSimChart(pts.map((_,i) => i), vals);
-    } else if (tl.length > 1) {
-      // Build cumulative PnL curve from trades
-      let cum = 0;
-      const curve = tl.map(t => { cum += (t.pnl||0); return cum; });
-      renderSimChart(tl.map((_,i) => i), curve);
-    }
+    const badge = `${(r.start_ts||'').slice(0,10)} – ${(r.end_ts||'').slice(0,10)}`;
+    setText('sim-chart-badge', badge);
+
+    const isCapital = fin.start_capital != null;
+    const fmtTs = ts => {
+      if (!ts) return '';
+      const d = new Date(ts);
+      return isNaN(d) ? String(ts).slice(0,16)
+        : d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})
+          + ' ' + d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+    };
+
+    let running = isCapital ? (fin.start_capital || 0) : 0;
+    const labels = [fmtTs(r.start_ts)];
+    const values = [running];
+    const tpPts  = [], slPts = [];
+
+    tl.forEach((t, i) => {
+      running += isCapital ? (t.netto_pnl_eur ?? 0) : (t.pnl || 0);
+      running  = isCapital ? Math.round(running * 100) / 100 : Math.round(running * 10000) / 10000;
+      const lbl = fmtTs(t.exit_ts);
+      labels.push(lbl);
+      values.push(running);
+      const st = (t.status || '').toLowerCase();
+      const pt = { x: lbl, y: running, asset: t.asset, dir: t.direction, conf: t.confidence };
+      if      (st.includes('tp')) tpPts.push(pt);
+      else if (st.includes('sl')) slPts.push(pt);
+    });
+
+    renderSimChart(labels, values, tpPts, slPts, isCapital);
   }
 
   // Trade table
@@ -1705,7 +1798,7 @@ function renderTradeTable(reset) {
       <div style="max-height:460px;overflow-y:auto;" id="sim-trades-scroll">
         <div style="overflow-x:auto;">
           <table class="tbl"><thead><tr>
-            <th>Datum</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
+            <th>Datum/Zeit</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
             <th>Ausstieg</th><th>PnL Pkt.</th><th>R</th><th>Conf</th>
             ${hasEur?'<th>Netto €</th>':''}
             <th>Status</th>
