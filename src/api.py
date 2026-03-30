@@ -972,6 +972,52 @@ def create_api() -> FastAPI:
             },
         }
 
+    @app.get("/api/sim/candles")
+    async def sim_get_candles(
+        db: str,
+        assets: str,
+        start: str | None = None,
+        end: str | None = None,
+        max_points: int = 400,
+    ):
+        """Downsampled close-price timeseries for given assets from a sim/history DB."""
+        from .fetch_history import HISTORY_DB_PATH
+        data_dir = os.path.dirname(HISTORY_DB_PATH)
+        db_path = os.path.join(data_dir, os.path.basename(db))
+        if not os.path.exists(db_path):
+            raise HTTPException(404, f"DB nicht gefunden: {db}")
+        asset_list = [a.strip() for a in assets.split(",") if a.strip()]
+
+        def _query() -> dict:
+            import sqlite3
+            result: dict = {}
+            con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            try:
+                for asset in asset_list:
+                    conds, params = ["asset = ?"], [asset]
+                    if start:
+                        conds.append("timestamp >= ?"); params.append(start)
+                    if end:
+                        conds.append("timestamp <= ?"); params.append(end)
+                    rows = con.execute(
+                        f"SELECT timestamp, close FROM price_history "
+                        f"WHERE {' AND '.join(conds)} ORDER BY timestamp ASC",
+                        params,
+                    ).fetchall()
+                    if len(rows) > max_points:
+                        step = max(1, len(rows) // max_points)
+                        rows = rows[::step]
+                    result[asset] = {
+                        "timestamps": [r[0] for r in rows],
+                        "prices":     [float(r[1]) for r in rows],
+                    }
+            finally:
+                con.close()
+            return result
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _query)
+
     # ── POST /api/sim-analysis ───────────────────────────────────────────
     class SimAnalysisRequest(BaseModel):
         current_result: dict

@@ -959,68 +959,107 @@ function renderPLChart(labels, values) {
   });
 }
 
-let _simHoverIdx = null;
+let _simHoverTradeIdx = null; // 0-based index into _simTradesFull, null = none
+let _simLastInputDb   = null; // input DB from last sim start (for asset curves)
+let _simLastAssets    = [];   // assets from last sim start
+const ASSET_COLORS = {
+  GOLD:       '#f5c542',
+  SILVER:     '#b0c4de',
+  OIL_CRUDE:  '#e67e22',
+  NATURALGAS: '#9b59b6',
+};
 
-function simChartHighlight(idx, rowEl) {
-  _simHoverIdx = (idx == null) ? null : Number(idx);
+function simChartHighlight(tradeIdx, rowEl) {
+  _simHoverTradeIdx = (tradeIdx == null) ? null : Number(tradeIdx);
   if (simChart) simChart.update('none');
-  // Highlight table row
   document.querySelectorAll('.tbl tr.chart-hover').forEach(r => r.classList.remove('chart-hover'));
   if (rowEl) rowEl.classList.add('chart-hover');
 }
 
-function renderSimChart(labels, values, tpPts, slPts, isCapital) {
+function simChartHighlightFromChart(tradeIdx) {
+  if (tradeIdx === _simHoverTradeIdx) return;
+  _simHoverTradeIdx = tradeIdx;
+  if (simChart) simChart.update('none');
+  document.querySelectorAll('.tbl tr.chart-hover').forEach(r => r.classList.remove('chart-hover'));
+  if (tradeIdx == null) return;
+  let row = document.querySelector(`.tbl tr[data-trade-idx="${tradeIdx}"]`);
+  // Load more pages if trade not yet rendered
+  if (!row && tradeIdx < _simTradesFull.length) {
+    while (_simTradesShown <= tradeIdx && _simTradesShown < _simTradesFull.length) {
+      renderTradeTable(false);
+    }
+    row = document.querySelector(`.tbl tr[data-trade-idx="${tradeIdx}"]`);
+  }
+  if (row) {
+    row.classList.add('chart-hover');
+    row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
+function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
   tpPts    = tpPts    || [];
   slPts    = slPts    || [];
   isCapital = !!isCapital;
-  _simHoverIdx = null;
+  _simHoverTradeIdx = null;
   const resetBtn = document.getElementById('sim-chart-reset-zoom');
   if (resetBtn) resetBtn.style.display = 'none';
 
   const ctx = getOrCreate('simChart');
 
-  const yFmt = v => isCapital
+  const yFmtCapital = v => isCapital
     ? '€\u202f' + Number(v).toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2})
     : Number(v).toFixed(4);
+
+  const tsFmt = v => {
+    const d = new Date(v);
+    return d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})
+      + ' ' + d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+  };
+
+  const hasMarkers = tpPts.length > 0 || slPts.length > 0;
 
   const datasets = [
     {
       label: isCapital ? 'Kapital' : 'Kum. PnL',
-      data: values,
+      yAxisID: 'yL',
+      data: equityPoints,
       borderColor: '#3b82f6', borderWidth: 2,
       backgroundColor: 'rgba(59,130,246,0.07)', fill: true, tension: 0.3,
-      pointRadius:          ctx => ctx.dataIndex === _simHoverIdx ? 9 : 0,
-      pointHoverRadius:     ctx => ctx.dataIndex === _simHoverIdx ? 11 : 4,
-      pointBackgroundColor: ctx => ctx.dataIndex === _simHoverIdx ? '#f5c542' : '#3b82f6',
-      pointBorderColor:     ctx => ctx.dataIndex === _simHoverIdx ? '#fff' : '#3b82f6',
-      pointBorderWidth:     ctx => ctx.dataIndex === _simHoverIdx ? 2 : 0,
-      order: 3,
+      pointRadius:          ctx => (ctx.raw?.tradeIdx != null && ctx.raw.tradeIdx === _simHoverTradeIdx) ? 9 : 0,
+      pointHoverRadius:     ctx => (ctx.raw?.tradeIdx != null && ctx.raw.tradeIdx === _simHoverTradeIdx) ? 11 : 4,
+      pointBackgroundColor: ctx => (ctx.raw?.tradeIdx != null && ctx.raw.tradeIdx === _simHoverTradeIdx) ? '#f5c542' : '#3b82f6',
+      pointBorderColor:     ctx => (ctx.raw?.tradeIdx != null && ctx.raw.tradeIdx === _simHoverTradeIdx) ? '#fff' : '#3b82f6',
+      pointBorderWidth:     ctx => (ctx.raw?.tradeIdx != null && ctx.raw.tradeIdx === _simHoverTradeIdx) ? 2 : 0,
+      order: 10,
     }
   ];
   if (tpPts.length) datasets.push({
-    label: 'TP',
-    type: 'scatter',
-    data: tpPts,
-    pointRadius: 5, pointHoverRadius: 7,
-    backgroundColor: 'rgba(0,255,65,0.85)', borderColor: 'rgba(0,255,65,0.4)', borderWidth: 1,
-    order: 1,
+    label: 'TP',  yAxisID: 'yL', type: 'scatter', data: tpPts,
+    pointRadius: ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? 9 : 5,
+    pointHoverRadius: 8,
+    backgroundColor: ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? '#fff' : 'rgba(0,255,65,0.85)',
+    borderColor: 'rgba(0,255,65,0.5)', borderWidth: 1, order: 2,
   });
   if (slPts.length) datasets.push({
-    label: 'SL',
-    type: 'scatter',
-    data: slPts,
-    pointRadius: 5, pointHoverRadius: 7,
-    backgroundColor: 'rgba(255,59,59,0.85)', borderColor: 'rgba(255,59,59,0.4)', borderWidth: 1,
-    order: 2,
+    label: 'SL', yAxisID: 'yL', type: 'scatter', data: slPts,
+    pointRadius: ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? 9 : 5,
+    pointHoverRadius: 8,
+    backgroundColor: ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? '#fff' : 'rgba(255,59,59,0.85)',
+    borderColor: 'rgba(255,59,59,0.5)', borderWidth: 1, order: 2,
   });
-
-  const hasMarkers = tpPts.length > 0 || slPts.length > 0;
 
   simChart = new Chart(ctx, {
     type: 'line',
-    data: { labels, datasets },
+    data: { datasets },
     options: {
       responsive: true, maintainAspectRatio: false,
+      onHover: (event, elements) => {
+        if (!elements.length) { simChartHighlightFromChart(null); return; }
+        for (const el of elements) {
+          const pt = simChart.data.datasets[el.datasetIndex].data[el.index];
+          if (pt && pt.tradeIdx != null) { simChartHighlightFromChart(pt.tradeIdx); return; }
+        }
+      },
       plugins: {
         zoom: {
           zoom: {
@@ -1035,42 +1074,135 @@ function renderSimChart(labels, values, tpPts, slPts, isCapital) {
           pan: { enabled: true, mode: 'x' },
         },
         legend: {
-          display: hasMarkers,
-          labels: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' }, boxWidth: 8, padding: 12 }
+          display: true,
+          labels: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' }, boxWidth: 8, padding: 10,
+            filter: item => item.text !== '_hidden' }
         },
         tooltip: {
           backgroundColor: '#18232e', borderColor: 'rgba(0,255,65,0.3)', borderWidth: 1,
           titleColor: '#c9d1d9', bodyColor: '#00ff41',
           callbacks: {
-            title: items => {
-              const idx = items[0].dataIndex;
-              const raw = items[0].raw;
-              // Scatter: x is label string; line: use labels array
-              return typeof raw === 'object' && raw.x ? raw.x : (labels[idx] || '');
-            },
+            title: items => tsFmt(items[0].parsed.x),
             label: item => {
               const raw = item.raw;
               const v   = typeof raw === 'object' ? raw.y : raw;
-              const base = `${item.dataset.label}: ${yFmt(v)}`;
-              if (typeof raw === 'object' && raw.asset)
-                return `${base}  ·  ${raw.asset} ${raw.dir}  conf ${raw.conf}`;
-              return base;
+              const ds  = item.dataset.label;
+              if (ds === 'Kapital' || ds === 'Kum. PnL') return `${ds}: ${yFmtCapital(v)}`;
+              if ((ds === 'TP' || ds === 'SL') && raw.asset)
+                return `${ds} · ${raw.asset} ${raw.dir} conf ${raw.conf}`;
+              // Asset price line
+              return `${ds}: ${Number(v).toFixed(4)}`;
             }
           }
         }
       },
       scales: {
         x: {
+          type: 'linear',
           grid: { color: 'rgba(255,255,255,0.04)' },
-          ticks: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' }, maxTicksLimit: 8, maxRotation: 0 }
+          ticks: {
+            color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' },
+            maxTicksLimit: 8, maxRotation: 0,
+            callback: v => tsFmt(v)
+          }
         },
-        y: {
+        yL: {
+          position: 'left',
           grid: { color: 'rgba(255,255,255,0.04)' },
-          ticks: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' }, callback: yFmt }
+          ticks: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' }, callback: yFmtCapital }
+        },
+        yR: {
+          position: 'right',
+          display: false, // shown only when asset curves are added
+          grid: { drawOnChartArea: false },
+          ticks: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' },
+            callback: v => Number(v).toFixed(2) }
         }
       }
     }
   });
+}
+
+async function loadAssetCurves(inputDb, assets, tl, startTs, endTs) {
+  if (!inputDb || !assets.length || !simChart) return;
+  const assetParam = assets.join(',');
+  let data;
+  try {
+    data = await apiFetch(
+      `/api/sim/candles?db=${encodeURIComponent(inputDb)}&assets=${encodeURIComponent(assetParam)}`
+      + (startTs ? `&start=${encodeURIComponent(startTs)}` : '')
+      + (endTs   ? `&end=${encodeURIComponent(endTs)}`     : '')
+    );
+  } catch (e) { console.warn('loadAssetCurves failed:', e); return; }
+
+  // Group trades by asset with their indices
+  const tradesByAsset = {};
+  tl.forEach((t, i) => {
+    if (!tradesByAsset[t.asset]) tradesByAsset[t.asset] = [];
+    tradesByAsset[t.asset].push({ ...t, tradeIdx: i });
+  });
+
+  const newDatasets = [];
+  for (const asset of assets) {
+    const series = data[asset];
+    if (!series || !series.timestamps.length) continue;
+    const color = ASSET_COLORS[asset] || '#888';
+
+    // Price line
+    newDatasets.push({
+      label: asset,
+      yAxisID: 'yR',
+      data: series.timestamps.map((ts, i) => ({ x: new Date(ts).getTime(), y: series.prices[i] })),
+      borderColor: color, borderWidth: 1.5,
+      backgroundColor: 'transparent', fill: false, tension: 0.1,
+      pointRadius: 0, pointHoverRadius: 3,
+      order: 20,
+    });
+
+    // Trade scatter points for this asset
+    const assetTrades = tradesByAsset[asset] || [];
+    if (assetTrades.length) {
+      const scatterData = assetTrades.map(t => {
+        const st = (t.status || '').toLowerCase();
+        return {
+          x:         new Date(t.exit_ts || t.entry_ts).getTime(),
+          y:         t.exit_price ?? t.entry_price,
+          tradeIdx:  t.tradeIdx,
+          asset:     t.asset,
+          dir:       t.direction,
+          conf:      t.confidence,
+          status:    t.status,
+          isTP:      st.includes('tp'),
+        };
+      });
+      newDatasets.push({
+        label: `${asset} Trades`,
+        yAxisID: 'yR',
+        type: 'scatter',
+        data: scatterData,
+        pointRadius:      ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? 10 : 6,
+        pointHoverRadius: 9,
+        backgroundColor: ctx => {
+          const r = ctx.raw;
+          if (r.tradeIdx === _simHoverTradeIdx) return '#fff';
+          return r.isTP ? 'rgba(0,255,65,0.85)' : 'rgba(255,59,59,0.85)';
+        },
+        borderColor: ctx => {
+          const r = ctx.raw;
+          return r.isTP ? 'rgba(0,255,65,0.5)' : 'rgba(255,59,59,0.5)';
+        },
+        borderWidth: 1.5,
+        order: 1,
+      });
+    }
+  }
+
+  if (!newDatasets.length) return;
+
+  // Show right Y axis
+  simChart.options.scales.yR.display = true;
+  newDatasets.forEach(ds => simChart.data.datasets.push(ds));
+  simChart.update('none');
 }
 
 /* ─── SIGNALS HTML ────────────────────────────────────────── */
@@ -1568,6 +1700,8 @@ async function startSim() {
       switchLog('sim');
       return;
     }
+    _simLastInputDb = inputDb || 'simLastCharts.db';
+    _simLastAssets  = assets && assets.length ? assets : ['GOLD','SILVER','OIL_CRUDE','NATURALGAS'];
     const modelName = modelPath ? modelPath.split('/').pop().split('\\').pop() : 'neuestes Modell';
     addSimLog('ok', `Simulation gestartet · Modell: ${modelName} · Assets: ${assets?.join(',')||'alle'} · Conf ≥ ${conf} · DB-In: ${inputDb||'default'} · DB-Out: ${outputDb||'default'}`);
     if (finOn) addSimLog('ok', `Finanzrechnung: ${body.capital}€ · Risiko ${(body.risk_pct*100).toFixed(1)}% · Hebel ${body.leverage}`);
@@ -1772,7 +1906,7 @@ function showSimResults(r) {
       ${fin.margin_call?'<div class="notif err" style="margin-top:10px;">MARGIN CALL – Kapital aufgebraucht</div>':''}`;
   }
 
-  // Equity curve – immer aus trade_list mit echten Timestamps aufbauen
+  // Equity curve – aus trade_list mit Unix-Timestamps aufbauen
   const tl = r.trade_list || [];
   if (tl.length > 0) {
     document.getElementById('sim-chart-card').style.display = '';
@@ -1780,32 +1914,31 @@ function showSimResults(r) {
     setText('sim-chart-badge', badge);
 
     const isCapital = fin.start_capital != null;
-    const fmtTs = ts => {
-      if (!ts) return '';
-      const d = new Date(ts);
-      return isNaN(d) ? String(ts).slice(0,16)
-        : d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})
-          + ' ' + d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
-    };
+    const toMs = ts => ts ? new Date(ts).getTime() : 0;
 
     let running = isCapital ? (fin.start_capital || 0) : 0;
-    const labels = [fmtTs(r.start_ts)];
-    const values = [running];
-    const tpPts  = [], slPts = [];
+    const equityPoints = [{ x: toMs(r.start_ts), y: running }];
+    const tpPts = [], slPts = [];
 
     tl.forEach((t, i) => {
       running += isCapital ? (t.netto_pnl_eur ?? 0) : (t.pnl || 0);
       running  = isCapital ? Math.round(running * 100) / 100 : Math.round(running * 10000) / 10000;
-      const lbl = fmtTs(t.exit_ts);
-      labels.push(lbl);
-      values.push(running);
+      const pt = { x: toMs(t.exit_ts || t.entry_ts), y: running, tradeIdx: i,
+                   asset: t.asset, dir: t.direction, conf: t.confidence };
+      equityPoints.push(pt);
       const st = (t.status || '').toLowerCase();
-      const pt = { x: lbl, y: running, asset: t.asset, dir: t.direction, conf: t.confidence };
       if      (st.includes('tp')) tpPts.push(pt);
       else if (st.includes('sl')) slPts.push(pt);
     });
 
-    renderSimChart(labels, values, tpPts, slPts, isCapital);
+    renderSimChart(equityPoints, tpPts, slPts, isCapital);
+
+    // Load asset price overlays asynchronously
+    const assets = r._history_meta?.assets?.length
+      ? r._history_meta.assets
+      : [...new Set(tl.map(t => t.asset))];
+    const inputDb = _simLastInputDb || null;
+    if (inputDb) loadAssetCurves(inputDb, assets, tl, r.start_ts, r.end_ts);
   }
 
   // Trade table
@@ -1828,8 +1961,8 @@ function renderTradeTable(reset) {
   const hasEur = tl[0]?.netto_pnl_eur != null;
   const end    = Math.min(_simTradesShown + SIM_TRADES_PAGE, tl.length);
   const rows   = tl.slice(_simTradesShown, end).map((t, si) => {
-    const chartIdx = _simTradesShown + si + 1; // +1: equity[0] = Startkapital
-    return `<tr onmouseenter="simChartHighlight(${chartIdx},this)" onmouseleave="simChartHighlight(null,null)">
+    const tradeIdx = _simTradesShown + si; // 0-based index into _simTradesFull
+    return `<tr data-trade-idx="${tradeIdx}" onmouseenter="simChartHighlight(${tradeIdx},this)" onmouseleave="simChartHighlight(null,null)">
     <td>${ts2date(t.entry_ts)}</td>
     <td>${t.asset}</td>
     <td class="${t.direction==='BUY'||t.direction==='long'?'cl':'cs'}">${t.direction==='BUY'||t.direction==='long'?'▲ LONG':'▼ SHORT'}</td>
