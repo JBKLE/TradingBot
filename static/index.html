@@ -1149,6 +1149,13 @@ async function _loadDetailRange(fromMs, toMs) {
       if (!ds._origData) ds._origData = ds.data;
       const detailData = series.timestamps.map((ts, i) => ({ x: new Date(ts).getTime(), y: series.prices[i] }));
       const outside = ds._origData.filter(p => p.x < fromMs || p.x > toMs);
+      // Inject trade entry prices so scatter dots sit on the line
+      const detailSet = new Set(detailData.map(p => p.x));
+      for (const t of _simTradesFull) {
+        if (t.asset !== asset) continue;
+        const eMs = new Date(t.entry_ts).getTime();
+        if (!detailSet.has(eMs) && eMs >= fromMs && eMs <= toMs) detailData.push({ x: eMs, y: t.entry_price });
+      }
       ds.data = [...outside, ...detailData].sort((a, b) => a.x - b.x);
     }
     simChart.update('none');
@@ -1449,9 +1456,17 @@ async function loadAssetCurves(inputDb, assets, tl, startTs, endTs) {
     if (!series || !series.timestamps.length) continue;
     const color = ASSET_COLORS[asset] || '#888';
 
-    // Price line
+    // Price line – inject trade entry prices (= real candle close) so dots sit on the line
     const priceData = series.timestamps.map((ts, i) => ({ x: new Date(ts).getTime(), y: series.prices[i] }));
     const assetTrades = tradesByAsset[asset] || [];
+    if (assetTrades.length) {
+      const existing = new Set(priceData.map(p => p.x));
+      for (const t of assetTrades) {
+        const xMs = new Date(t.entry_ts).getTime();
+        if (!existing.has(xMs)) priceData.push({ x: xMs, y: t.entry_price });
+      }
+      priceData.sort((a, b) => a.x - b.x);
+    }
     newDatasets.push({
       label: asset,
       yAxisID: 'yR',
