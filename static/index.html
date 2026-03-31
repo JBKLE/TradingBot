@@ -699,7 +699,7 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
           <span class="card-title">Equity Kurve</span>
           <span class="badge badge-b" id="sim-chart-badge">—</span>
           <span style="font-size:10px;color:var(--text-dim);margin-left:auto;margin-right:8px;">Scrollen = Zoom · Drag = Pan</span>
-          <button class="btn btn-ghost btn-sm" id="sim-chart-reset-zoom" style="display:none" onclick="if(simChart){simChart.resetZoom();this.style.display='none';}">↺ Reset</button>
+          <button class="btn btn-ghost btn-sm" id="sim-chart-reset-zoom" style="display:none" onclick="if(simChart){simChart.resetZoom();this.style.display='none';simTradeSelect(null);}">↺ Reset</button>
         </div>
         <div class="chart-wrap h300"><canvas id="simChart"></canvas></div>
       </div>
@@ -1009,8 +1009,15 @@ function simChartHighlightFromChart(tradeIdx) {
 
 /* ─── TRADE INSPECTOR (click-to-inspect) ─────────────────── */
 function simTradeSelect(tradeIdx) {
-  // Toggle: click same trade again → deselect
-  if (_simSelectedTradeIdx === tradeIdx) { tradeIdx = null; }
+  // Toggle: click same trade again → deselect & reset zoom
+  if (_simSelectedTradeIdx === tradeIdx) {
+    tradeIdx = null;
+    _simSelectedTradeIdx = null;
+    document.querySelectorAll('.tbl tr.chart-selected').forEach(r => r.classList.remove('chart-selected'));
+    if (simChart) simChart.resetZoom();
+    _updateInspectorLines();
+    return;
+  }
   _simSelectedTradeIdx = tradeIdx;
   // Highlight row
   document.querySelectorAll('.tbl tr.chart-selected').forEach(r => r.classList.remove('chart-selected'));
@@ -1021,6 +1028,18 @@ function simTradeSelect(tradeIdx) {
       row = document.querySelector(`.tbl tr[data-trade-idx="${tradeIdx}"]`);
     }
     if (row) { row.classList.add('chart-selected'); row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+
+    // Zoom chart to trade time range with padding
+    const t = _simTradesFull[tradeIdx];
+    if (t && simChart) {
+      const entryMs = new Date(t.entry_ts).getTime();
+      const exitMs  = new Date(t.exit_ts || t.entry_ts).getTime();
+      const span    = Math.max(exitMs - entryMs, 60000); // min 1 minute
+      const pad     = span * 2; // 2x padding on each side
+      simChart.zoomScale('x', { min: entryMs - pad, max: exitMs + pad });
+      const btn = document.getElementById('sim-chart-reset-zoom');
+      if (btn) btn.style.display = '';
+    }
   }
   _updateInspectorLines();
 }
@@ -1234,19 +1253,30 @@ async function loadAssetCurves(inputDb, assets, tl, startTs, endTs) {
     if (!series || !series.timestamps.length) continue;
     const color = ASSET_COLORS[asset] || '#888';
 
-    // Price line
+    // Price line – inject trade entry/exit prices so dots sit exactly on the line
+    const priceData = series.timestamps.map((ts, i) => ({ x: new Date(ts).getTime(), y: series.prices[i] }));
+    const assetTrades = tradesByAsset[asset] || [];
+    if (assetTrades.length) {
+      const existing = new Set(priceData.map(p => p.x));
+      assetTrades.forEach(t => {
+        const entryMs = new Date(t.entry_ts).getTime();
+        const exitMs  = t.exit_ts ? new Date(t.exit_ts).getTime() : 0;
+        if (!existing.has(entryMs)) priceData.push({ x: entryMs, y: t.entry_price });
+        if (exitMs && !existing.has(exitMs) && t.exit_price) priceData.push({ x: exitMs, y: t.exit_price });
+      });
+      priceData.sort((a, b) => a.x - b.x);
+    }
     newDatasets.push({
       label: asset,
       yAxisID: 'yR',
-      data: series.timestamps.map((ts, i) => ({ x: new Date(ts).getTime(), y: series.prices[i] })),
+      data: priceData,
       borderColor: color, borderWidth: 1.5,
-      backgroundColor: 'transparent', fill: false, tension: 0.1,
+      backgroundColor: 'transparent', fill: false, tension: 0,
       pointRadius: 0, pointHoverRadius: 3,
       order: 20,
     });
 
     // Trade scatter – single point per trade at entry time/price
-    const assetTrades = tradesByAsset[asset] || [];
     if (assetTrades.length) {
       const scatterData = assetTrades.map(t => {
         const st = (t.status || '').toLowerCase();
