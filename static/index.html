@@ -1043,39 +1043,42 @@ function _updateInspectorLines() {
   });
 
   if (t) {
-    const xMin = simChart.scales.x.min;
-    const xMax = simChart.scales.x.max;
+    const yMin = simChart.scales.yR.min;
+    const yMax = simChart.scales.yR.max;
     const entryMs = new Date(t.entry_ts).getTime();
+    const exitMs  = new Date(t.exit_ts || t.entry_ts).getTime();
 
     const dsEntry = simChart.data.datasets.find(d => d._inspectId === '_inspEntry');
     const dsExit  = simChart.data.datasets.find(d => d._inspectId === '_inspExit');
     const dsTP    = simChart.data.datasets.find(d => d._inspectId === '_inspTP');
     const dsSL    = simChart.data.datasets.find(d => d._inspectId === '_inspSL');
 
-    // Horizontal: entry price (white) – full chart width
-    dsEntry.data = [{ x: xMin, y: t.entry_price }, { x: xMax, y: t.entry_price }];
-    dsEntry.borderColor = 'rgba(255,255,255,0.7)';
+    // Vertical: entry time (white) – full chart height
+    dsEntry.data = [{ x: entryMs, y: yMin }, { x: entryMs, y: yMax }];
+    dsEntry.borderColor = 'rgba(255,255,255,0.5)';
     dsEntry.borderDash = [];
+    dsEntry.borderWidth = 1.5;
 
-    // Horizontal: exit price (yellow) – full chart width
-    dsExit.data = [{ x: xMin, y: t.exit_price }, { x: xMax, y: t.exit_price }];
-    dsExit.borderColor = 'rgba(245,197,66,0.7)';
+    // Vertical: exit time (yellow) – full chart height
+    dsExit.data = [{ x: exitMs, y: yMin }, { x: exitMs, y: yMax }];
+    dsExit.borderColor = 'rgba(245,197,66,0.5)';
     dsExit.borderDash = [];
+    dsExit.borderWidth = 1.5;
 
-    // Vertical: TP (green dashed) – from entry_price up to tp_price at entry time
+    // Horizontal: TP level (green) – from entry to exit
     if (t.tp_price) {
-      dsTP.data = [{ x: entryMs, y: t.entry_price }, { x: entryMs, y: t.tp_price }];
+      dsTP.data = [{ x: entryMs, y: t.tp_price }, { x: exitMs, y: t.tp_price }];
       dsTP.borderColor = 'rgba(0,255,65,0.8)';
-      dsTP.borderDash = [6, 3];
-      dsTP.borderWidth = 2;
+      dsTP.borderDash = [];
+      dsTP.borderWidth = 1.5;
     }
 
-    // Vertical: SL (red dashed) – from entry_price down to sl_price at entry time
+    // Horizontal: SL level (red) – from entry to exit
     if (t.sl_price) {
-      dsSL.data = [{ x: entryMs, y: t.entry_price }, { x: entryMs, y: t.sl_price }];
+      dsSL.data = [{ x: entryMs, y: t.sl_price }, { x: exitMs, y: t.sl_price }];
       dsSL.borderColor = 'rgba(255,59,59,0.8)';
-      dsSL.borderDash = [6, 3];
-      dsSL.borderWidth = 2;
+      dsSL.borderDash = [];
+      dsSL.borderWidth = 1.5;
     }
   }
 
