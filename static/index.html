@@ -215,6 +215,8 @@ hr.div { border: none; border-top: 1px solid var(--border-dim); margin: 20px 0; 
 .tbl tr:last-child td { border-bottom: none; }
 .tbl tr:hover td { background: rgba(255,255,255,.02); }
 .tbl tr.chart-hover td { background: rgba(245,197,66,0.08); cursor: default; }
+.tbl tr.chart-selected td { background: rgba(245,197,66,0.18); border-top: 1px solid rgba(245,197,66,0.3); border-bottom: 1px solid rgba(245,197,66,0.3); }
+.tbl tr { cursor: pointer; }
 .cl { color: var(--green); }
 .cs { color: var(--red); }
 .pp { color: var(--green); }
@@ -967,9 +969,10 @@ function renderPLChart(labels, values) {
   });
 }
 
-let _simHoverTradeIdx = null; // 0-based index into _simTradesFull, null = none
-let _simLastInputDb   = null; // input DB from last sim start (for asset curves)
-let _simLastAssets    = [];   // assets from last sim start
+let _simHoverTradeIdx    = null; // 0-based index into _simTradesFull, null = none
+let _simSelectedTradeIdx = null; // clicked/inspected trade, null = none
+let _simLastInputDb      = null; // input DB from last sim start (for asset curves)
+let _simLastAssets       = [];   // assets from last sim start
 const ASSET_COLORS = {
   GOLD:       '#f5c542',
   SILVER:     '#b0c4de',
@@ -1004,9 +1007,85 @@ function simChartHighlightFromChart(tradeIdx) {
   }
 }
 
+/* ─── TRADE INSPECTOR (click-to-inspect) ─────────────────── */
+function simTradeSelect(tradeIdx) {
+  // Toggle: click same trade again → deselect
+  if (_simSelectedTradeIdx === tradeIdx) { tradeIdx = null; }
+  _simSelectedTradeIdx = tradeIdx;
+  // Highlight row
+  document.querySelectorAll('.tbl tr.chart-selected').forEach(r => r.classList.remove('chart-selected'));
+  if (tradeIdx != null) {
+    let row = document.querySelector(`.tbl tr[data-trade-idx="${tradeIdx}"]`);
+    if (!row && tradeIdx < _simTradesFull.length) {
+      while (_simTradesShown <= tradeIdx && _simTradesShown < _simTradesFull.length) renderTradeTable(false);
+      row = document.querySelector(`.tbl tr[data-trade-idx="${tradeIdx}"]`);
+    }
+    if (row) { row.classList.add('chart-selected'); row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+  }
+  _updateInspectorLines();
+}
+
+function _updateInspectorLines() {
+  if (!simChart) return;
+  const t = _simSelectedTradeIdx != null ? _simTradesFull[_simSelectedTradeIdx] : null;
+
+  // Find or create the 4 inspector datasets by _inspectId
+  const ids = ['_inspEntry', '_inspExit', '_inspTP', '_inspSL'];
+  ids.forEach(id => {
+    let ds = simChart.data.datasets.find(d => d._inspectId === id);
+    if (!ds) {
+      ds = { _inspectId: id, label: '_hidden', yAxisID: 'yR', type: 'line',
+             data: [], pointRadius: 0, pointHoverRadius: 0, fill: false,
+             borderWidth: 1.5, order: 5 };
+      simChart.data.datasets.push(ds);
+    }
+    ds.data = [];
+  });
+
+  if (t) {
+    const xMin = simChart.scales.x.min;
+    const xMax = simChart.scales.x.max;
+    const entryMs = new Date(t.entry_ts).getTime();
+
+    const dsEntry = simChart.data.datasets.find(d => d._inspectId === '_inspEntry');
+    const dsExit  = simChart.data.datasets.find(d => d._inspectId === '_inspExit');
+    const dsTP    = simChart.data.datasets.find(d => d._inspectId === '_inspTP');
+    const dsSL    = simChart.data.datasets.find(d => d._inspectId === '_inspSL');
+
+    // Horizontal: entry price (white) – full chart width
+    dsEntry.data = [{ x: xMin, y: t.entry_price }, { x: xMax, y: t.entry_price }];
+    dsEntry.borderColor = 'rgba(255,255,255,0.7)';
+    dsEntry.borderDash = [];
+
+    // Horizontal: exit price (yellow) – full chart width
+    dsExit.data = [{ x: xMin, y: t.exit_price }, { x: xMax, y: t.exit_price }];
+    dsExit.borderColor = 'rgba(245,197,66,0.7)';
+    dsExit.borderDash = [];
+
+    // Vertical: TP (green dashed) – from entry_price up to tp_price at entry time
+    if (t.tp_price) {
+      dsTP.data = [{ x: entryMs, y: t.entry_price }, { x: entryMs, y: t.tp_price }];
+      dsTP.borderColor = 'rgba(0,255,65,0.8)';
+      dsTP.borderDash = [6, 3];
+      dsTP.borderWidth = 2;
+    }
+
+    // Vertical: SL (red dashed) – from entry_price down to sl_price at entry time
+    if (t.sl_price) {
+      dsSL.data = [{ x: entryMs, y: t.entry_price }, { x: entryMs, y: t.sl_price }];
+      dsSL.borderColor = 'rgba(255,59,59,0.8)';
+      dsSL.borderDash = [6, 3];
+      dsSL.borderWidth = 2;
+    }
+  }
+
+  simChart.update('none');
+}
+
 function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
   isCapital = !!isCapital;
   _simHoverTradeIdx = null;
+  _simSelectedTradeIdx = null;
   const resetBtn = document.getElementById('sim-chart-reset-zoom');
   if (resetBtn) resetBtn.style.display = 'none';
 
@@ -1028,7 +1107,7 @@ function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
       yAxisID: 'yL',
       data: equityPoints,
       borderColor: '#3b82f6', borderWidth: 2,
-      backgroundColor: 'rgba(59,130,246,0.07)', fill: true, tension: 0.3,
+      backgroundColor: 'rgba(59,130,246,0.07)', fill: true, tension: 0,
       pointRadius:          ctx => (ctx.raw?.tradeIdx != null && ctx.raw.tradeIdx === _simHoverTradeIdx) ? 9 : 0,
       pointHoverRadius:     ctx => (ctx.raw?.tradeIdx != null && ctx.raw.tradeIdx === _simHoverTradeIdx) ? 11 : 4,
       pointBackgroundColor: ctx => (ctx.raw?.tradeIdx != null && ctx.raw.tradeIdx === _simHoverTradeIdx) ? '#f5c542' : '#3b82f6',
@@ -1051,6 +1130,14 @@ function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
           if (pt && pt.tradeIdx != null) { simChartHighlightFromChart(pt.tradeIdx); return; }
         }
       },
+      onClick: (event, elements) => {
+        let clickedIdx = null;
+        for (const el of elements) {
+          const pt = simChart.data.datasets[el.datasetIndex].data[el.index];
+          if (pt && pt.tradeIdx != null) { clickedIdx = pt.tradeIdx; break; }
+        }
+        simTradeSelect(clickedIdx);
+      },
       plugins: {
         zoom: {
           zoom: {
@@ -1060,9 +1147,10 @@ function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
             onZoomComplete: () => {
               const btn = document.getElementById('sim-chart-reset-zoom');
               if (btn) btn.style.display = '';
+              _updateInspectorLines();
             }
           },
-          pan: { enabled: true, mode: 'x' },
+          pan: { enabled: true, mode: 'x', onPanComplete: () => _updateInspectorLines() },
         },
         legend: {
           display: true,
@@ -1079,11 +1167,10 @@ function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
               const v   = typeof raw === 'object' ? raw.y : raw;
               const ds  = item.dataset.label;
               if (ds === 'Kapital' || ds === 'Kum. PnL') return `${ds}: ${yFmtCapital(v)}`;
-              // Trade entry/exit scatter points
-              if (ds === '_hidden' && raw && raw._type) {
-                const dir  = raw.dir === 'BUY' ? '▲' : '▼';
-                const type = raw._type === 'exit' ? 'Exit' : 'Entry';
-                return `${type} · ${raw.asset} ${dir} ${Number(v).toFixed(2)} · Conf ${raw.conf}`;
+              // Trade scatter points
+              if (ds === '_hidden' && raw && raw.asset) {
+                const dir = raw.dir === 'BUY' ? '▲' : '▼';
+                return `${raw.asset} ${dir} ${Number(v).toFixed(2)} · Conf ${raw.conf}`;
               }
               if (ds === '_hidden') return null;
               // Asset price line
@@ -1138,17 +1225,13 @@ async function loadAssetCurves(inputDb, assets, tl, startTs, endTs) {
     tradesByAsset[t.asset].push({ ...t, tradeIdx: i });
   });
 
-  // Performance tier
-  const totalTrades = tl.length;
-  const tier = totalTrades < 100 ? 'full' : totalTrades <= 500 ? 'medium' : 'minimal';
-
   const newDatasets = [];
   for (const asset of assets) {
     const series = data[asset];
     if (!series || !series.timestamps.length) continue;
     const color = ASSET_COLORS[asset] || '#888';
 
-    // 1) Price line
+    // Price line
     newDatasets.push({
       label: asset,
       yAxisID: 'yR',
@@ -1159,148 +1242,44 @@ async function loadAssetCurves(inputDb, assets, tl, startTs, endTs) {
       order: 20,
     });
 
+    // Trade scatter – single point per trade at entry time/price
     const assetTrades = tradesByAsset[asset] || [];
-    if (!assetTrades.length) continue;
-
-    // Prepare per-trade data arrays
-    const entryPts = [], exitPts = [], spanData = [], tpData = [], slData = [];
-    assetTrades.forEach(t => {
-      const st       = (t.status || '').toLowerCase();
-      const isTP     = st.includes('tp');
-      const isSL     = st.includes('sl');
-      const entryMs  = new Date(t.entry_ts).getTime();
-      const exitMs   = new Date(t.exit_ts || t.entry_ts).getTime();
-      const meta     = { tradeIdx: t.tradeIdx, asset: t.asset, dir: t.direction, conf: t.confidence, status: t.status, isTP };
-
-      // Entry point
-      entryPts.push({ x: entryMs, y: t.entry_price, _type: 'entry', ...meta });
-
-      // Exit point (only if we have an exit)
-      if (t.exit_ts) {
-        exitPts.push({ x: exitMs, y: t.exit_price, _type: 'exit', ...meta });
-      }
-
-      // Entry→Exit connector line (NaN-separated segments)
-      if (t.exit_ts) {
-        spanData.push({ x: entryMs, y: t.entry_price, tradeIdx: t.tradeIdx, isTP });
-        spanData.push({ x: exitMs,  y: t.exit_price,  tradeIdx: t.tradeIdx, isTP });
-        spanData.push({ x: NaN, y: NaN });
-      }
-
-      // TP level line
-      if (t.tp_price) {
-        tpData.push({ x: entryMs, y: t.tp_price, tradeIdx: t.tradeIdx });
-        tpData.push({ x: exitMs,  y: t.tp_price, tradeIdx: t.tradeIdx });
-        tpData.push({ x: NaN, y: NaN });
-      }
-
-      // SL level line
-      if (t.sl_price) {
-        slData.push({ x: entryMs, y: t.sl_price, tradeIdx: t.tradeIdx });
-        slData.push({ x: exitMs,  y: t.sl_price, tradeIdx: t.tradeIdx });
-        slData.push({ x: NaN, y: NaN });
-      }
-    });
-
-    // 2) Entry scatter – triangles (▲ BUY / ▼ SELL)
-    newDatasets.push({
-      label: '_hidden', yAxisID: 'yR', type: 'scatter', data: entryPts,
-      pointStyle: ctx => ctx.raw.dir === 'BUY' ? 'triangle' : 'triangle',
-      rotation:   ctx => ctx.raw.dir === 'BUY' ? 0 : 180,
-      pointRadius:      ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? 10 : 5,
-      pointHoverRadius: 8,
-      backgroundColor:  ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? '#fff'
-        : (ctx.raw.dir === 'BUY' ? 'rgba(0,255,65,0.9)' : 'rgba(255,59,59,0.9)'),
-      borderColor: ctx => ctx.raw.dir === 'BUY' ? 'rgba(0,255,65,0.5)' : 'rgba(255,59,59,0.5)',
-      borderWidth: 1.5, order: 2,
-    });
-
-    // 3) Exit scatter – circles (green TP / red SL / gray closed_end)
-    if (exitPts.length) {
+    if (assetTrades.length) {
+      const scatterData = assetTrades.map(t => {
+        const st = (t.status || '').toLowerCase();
+        return {
+          x:        new Date(t.entry_ts).getTime(),
+          y:        t.entry_price,
+          tradeIdx: t.tradeIdx,
+          asset:    t.asset,
+          dir:      t.direction,
+          conf:     t.confidence,
+          status:   t.status,
+          isTP:     st.includes('tp'),
+        };
+      });
       newDatasets.push({
-        label: '_hidden', yAxisID: 'yR', type: 'scatter', data: exitPts,
-        pointStyle: 'circle',
-        pointRadius:      ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? 10 : 6,
-        pointHoverRadius: 9,
-        backgroundColor:  ctx => {
-          if (ctx.raw.tradeIdx === _simHoverTradeIdx) return '#fff';
-          const st = (ctx.raw.status || '').toLowerCase();
-          if (st.includes('tp'))  return 'rgba(0,255,65,0.85)';
-          if (st.includes('sl'))  return 'rgba(255,59,59,0.85)';
-          return 'rgba(128,128,128,0.7)';
+        label: '_hidden', yAxisID: 'yR', type: 'scatter', data: scatterData,
+        pointRadius: ctx => {
+          const idx = ctx.raw.tradeIdx;
+          if (idx === _simSelectedTradeIdx) return 7;
+          if (idx === _simHoverTradeIdx)    return 5;
+          return 3;
+        },
+        pointHoverRadius: 5,
+        backgroundColor: ctx => {
+          const r = ctx.raw;
+          if (r.tradeIdx === _simSelectedTradeIdx) return '#f5c542';
+          if (r.tradeIdx === _simHoverTradeIdx)    return '#fff';
+          return r.isTP ? 'rgba(0,255,65,0.85)' : 'rgba(255,59,59,0.85)';
         },
         borderColor: ctx => {
-          const st = (ctx.raw.status || '').toLowerCase();
-          if (st.includes('tp'))  return 'rgba(0,255,65,0.5)';
-          if (st.includes('sl'))  return 'rgba(255,59,59,0.5)';
-          return 'rgba(128,128,128,0.4)';
+          const r = ctx.raw;
+          if (r.tradeIdx === _simSelectedTradeIdx) return '#fff';
+          return r.isTP ? 'rgba(0,255,65,0.5)' : 'rgba(255,59,59,0.5)';
         },
-        borderWidth: 1.5, order: 1,
-      });
-    }
-
-    // 4) Trade span connector lines (entry → exit)
-    if (spanData.length && tier !== 'minimal') {
-      newDatasets.push({
-        label: '_hidden', yAxisID: 'yR', type: 'line', data: spanData,
-        borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0, fill: false,
-        spanGaps: false,
-        segment: {
-          borderColor: ctx => {
-            const idx = ctx.p0?.$context?.raw?.tradeIdx;
-            const hovered = idx != null && idx === _simHoverTradeIdx;
-            const isTP = ctx.p0?.$context?.raw?.isTP;
-            if (hovered) return 'rgba(255,255,255,0.8)';
-            return isTP ? 'rgba(0,255,65,0.25)' : 'rgba(255,59,59,0.25)';
-          },
-          borderWidth: ctx => {
-            const idx = ctx.p0?.$context?.raw?.tradeIdx;
-            return (idx != null && idx === _simHoverTradeIdx) ? 2.5 : 1;
-          },
-        },
-        order: 15,
-      });
-    }
-
-    // Helper: segment visibility for TP/SL lines based on tier
-    const levelSegment = (baseColor, hoverColor) => ({
-      borderColor: ctx => {
-        const idx = ctx.p0?.$context?.raw?.tradeIdx;
-        const hovered = idx != null && idx === _simHoverTradeIdx;
-        if (hovered) return hoverColor;
-        if (tier === 'full') return baseColor;
-        // medium/minimal: only visible on hover
-        return 'rgba(0,0,0,0)';
-      },
-      borderWidth: ctx => {
-        const idx = ctx.p0?.$context?.raw?.tradeIdx;
-        return (idx != null && idx === _simHoverTradeIdx) ? 2 : 1;
-      },
-      borderDash: ctx => {
-        const idx = ctx.p0?.$context?.raw?.tradeIdx;
-        return (idx != null && idx === _simHoverTradeIdx) ? [6, 3] : [4, 4];
-      },
-    });
-
-    // 5) TP level lines (dashed green)
-    if (tpData.length) {
-      newDatasets.push({
-        label: '_hidden', yAxisID: 'yR', type: 'line', data: tpData,
-        borderColor: 'rgba(0,255,65,0.35)', borderDash: [4, 4], borderWidth: 1,
-        pointRadius: 0, pointHoverRadius: 0, fill: false, spanGaps: false,
-        segment: levelSegment('rgba(0,255,65,0.35)', 'rgba(0,255,65,0.9)'),
-        order: 14,
-      });
-    }
-
-    // 6) SL level lines (dashed red)
-    if (slData.length) {
-      newDatasets.push({
-        label: '_hidden', yAxisID: 'yR', type: 'line', data: slData,
-        borderColor: 'rgba(255,59,59,0.35)', borderDash: [4, 4], borderWidth: 1,
-        pointRadius: 0, pointHoverRadius: 0, fill: false, spanGaps: false,
-        segment: levelSegment('rgba(255,59,59,0.35)', 'rgba(255,59,59,0.9)'),
-        order: 14,
+        borderWidth: ctx => ctx.raw.tradeIdx === _simSelectedTradeIdx ? 2 : 1,
+        order: 1,
       });
     }
   }
@@ -2066,7 +2045,7 @@ function renderTradeTable(reset) {
   const end    = Math.min(_simTradesShown + SIM_TRADES_PAGE, tl.length);
   const rows   = tl.slice(_simTradesShown, end).map((t, si) => {
     const tradeIdx = _simTradesShown + si; // 0-based index into _simTradesFull
-    return `<tr data-trade-idx="${tradeIdx}" onmouseenter="simChartHighlight(${tradeIdx},this)" onmouseleave="simChartHighlight(null,null)">
+    return `<tr data-trade-idx="${tradeIdx}" onmouseenter="simChartHighlight(${tradeIdx},this)" onmouseleave="simChartHighlight(null,null)" onclick="simTradeSelect(${tradeIdx})">
     <td>${ts2date(t.entry_ts)}</td>
     <td>${t.asset}</td>
     <td class="${t.direction==='BUY'||t.direction==='long'?'cl':'cs'}">${t.direction==='BUY'||t.direction==='long'?'▲ LONG':'▼ SHORT'}</td>
