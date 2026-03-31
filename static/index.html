@@ -1149,15 +1149,6 @@ async function _loadDetailRange(fromMs, toMs) {
       if (!ds._origData) ds._origData = ds.data;
       const detailData = series.timestamps.map((ts, i) => ({ x: new Date(ts).getTime(), y: series.prices[i] }));
       const outside = ds._origData.filter(p => p.x < fromMs || p.x > toMs);
-      // Inject trade entry/exit prices so scatter dots sit exactly on the line
-      const detailSet = new Set(detailData.map(p => p.x));
-      _simTradesFull.forEach(t => {
-        if (t.asset !== asset) return;
-        const eMs = new Date(t.entry_ts).getTime();
-        const xMs = t.exit_ts ? new Date(t.exit_ts).getTime() : 0;
-        if (!detailSet.has(eMs) && eMs >= fromMs && eMs <= toMs) detailData.push({ x: eMs, y: t.entry_price });
-        if (xMs && !detailSet.has(xMs) && xMs >= fromMs && xMs <= toMs) detailData.push({ x: xMs, y: t.exit_price });
-      });
       ds.data = [...outside, ...detailData].sort((a, b) => a.x - b.x);
     }
     simChart.update('none');
@@ -1458,19 +1449,9 @@ async function loadAssetCurves(inputDb, assets, tl, startTs, endTs) {
     if (!series || !series.timestamps.length) continue;
     const color = ASSET_COLORS[asset] || '#888';
 
-    // Price line – inject trade entry/exit prices so dots sit exactly on the line
+    // Price line
     const priceData = series.timestamps.map((ts, i) => ({ x: new Date(ts).getTime(), y: series.prices[i] }));
     const assetTrades = tradesByAsset[asset] || [];
-    if (assetTrades.length) {
-      const existing = new Set(priceData.map(p => p.x));
-      assetTrades.forEach(t => {
-        const entryMs = new Date(t.entry_ts).getTime();
-        const exitMs  = t.exit_ts ? new Date(t.exit_ts).getTime() : 0;
-        if (!existing.has(entryMs)) priceData.push({ x: entryMs, y: t.entry_price });
-        if (exitMs && !existing.has(exitMs) && t.exit_price) priceData.push({ x: exitMs, y: t.exit_price });
-      });
-      priceData.sort((a, b) => a.x - b.x);
-    }
     newDatasets.push({
       label: asset,
       yAxisID: 'yR',
