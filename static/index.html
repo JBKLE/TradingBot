@@ -708,7 +708,7 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
           <span class="card-title">Asset Kurve</span>
           <span class="badge badge-b" id="sim-chart-badge">—</span>
           <span style="font-size:10px;color:var(--text-dim);margin-left:auto;margin-right:8px;">Scrollen = Zoom · Drag = Pan</span>
-          <button class="btn btn-ghost btn-sm" id="sim-chart-reset-zoom" style="display:none" onclick="if(simChart){_removeDetailCandles();simChart.resetZoom();this.style.display='none';simTradeSelect(null);}">↺ Reset</button>
+          <button class="btn btn-ghost btn-sm" id="sim-chart-reset-zoom" style="display:none" onclick="if(simChart){_removeDetailCandles();simChart.resetZoom();if(simCapitalChart)simCapitalChart.resetZoom();this.style.display='none';simTradeSelect(null);}">↺ Reset</button>
         </div>
         <div class="chart-wrap h300"><canvas id="simChart"></canvas></div>
       </div>
@@ -1042,6 +1042,7 @@ function simTradeSelect(tradeIdx) {
     document.querySelectorAll('.tbl tr.chart-selected').forEach(r => r.classList.remove('chart-selected'));
     _removeDetailCandles();
     if (simChart) simChart.resetZoom();
+    if (simCapitalChart) simCapitalChart.resetZoom();
     _updateInspectorLines();
     return;
   }
@@ -1066,46 +1067,99 @@ function simTradeSelect(tradeIdx) {
       simChart.zoomScale('x', { min: entryMs - pad, max: exitMs + pad });
       const btn = document.getElementById('sim-chart-reset-zoom');
       if (btn) btn.style.display = '';
-      // Load detail candles around this trade
-      _loadDetailCandles(t.asset, entryMs - pad, exitMs + pad);
+      _syncChartsOnZoom();
     }
   }
   _updateInspectorLines();
 }
 
-async function _loadDetailCandles(asset, fromMs, toMs) {
-  if (!_simLastInputDb || !simChart) return;
+let _detailDebounce = null;
+let _syncLock = false; // prevent infinite sync loops
+
+function _syncFromCapitalChart() {
+  if (_syncLock || !simCapitalChart || !simChart) return;
+  _syncLock = true;
+  const xMin = simCapitalChart.scales.x?.min;
+  const xMax = simCapitalChart.scales.x?.max;
+  if (xMin != null && xMax != null) {
+    simChart.zoomScale('x', { min: xMin, max: xMax });
+    const btn = document.getElementById('sim-chart-reset-zoom');
+    if (btn) btn.style.display = '';
+  }
+  _updateInspectorLines();
+  if (_detailDebounce) clearTimeout(_detailDebounce);
+  _detailDebounce = setTimeout(() => _loadDetailRange(xMin, xMax), 250);
+  _syncLock = false;
+}
+
+function _syncChartsOnZoom() {
+  if (_syncLock || !simChart) return;
+  _syncLock = true;
+  const xMin = simChart.scales.x?.min;
+  const xMax = simChart.scales.x?.max;
+
+  // Sync capital chart x-axis
+  if (simCapitalChart && xMin != null && xMax != null) {
+    simCapitalChart.zoomScale('x', { min: xMin, max: xMax });
+  }
+  _syncLock = false;
+
+  _updateInspectorLines();
+
+  // Debounced detail candle loading
+  if (_detailDebounce) clearTimeout(_detailDebounce);
+  _detailDebounce = setTimeout(() => _loadDetailRange(xMin, xMax), 250);
+}
+
+async function _loadDetailRange(fromMs, toMs) {
+  if (!_simLastInputDb || !simChart || fromMs == null || toMs == null) return;
+
+  // Determine zoom factor — only load detail when zoomed in enough
+  const allData = simChart.data.datasets.find(ds => ds._origData || (ds.yAxisID === 'yR' && ds.label !== '_hidden'));
+  if (!allData) return;
+  const origData = allData._origData || allData.data;
+  if (!origData.length) return;
+  const totalRange = origData[origData.length - 1].x - origData[0].x;
+  const visibleRange = toMs - fromMs;
+  if (totalRange <= 0) return;
+  const zf = totalRange / visibleRange;
+  if (zf < 1.5) { _removeDetailCandles(); simChart.update('none'); return; }
+
+  // Collect all asset names from chart datasets
+  const assets = simChart.data.datasets
+    .filter(ds => ds.yAxisID === 'yR' && ds.label !== '_hidden' && !ds._inspectId)
+    .map(ds => ds.label);
+  if (!assets.length) return;
+
   const startIso = new Date(fromMs).toISOString();
   const endIso   = new Date(toMs).toISOString();
   try {
     const d = await apiFetch(
       `/api/sim/candles?db=${encodeURIComponent(_simLastInputDb)}`
-      + `&assets=${encodeURIComponent(asset)}`
+      + `&assets=${encodeURIComponent(assets.join(','))}`
       + `&start=${encodeURIComponent(startIso)}`
       + `&end=${encodeURIComponent(endIso)}`
       + `&max_points=5000`
     );
-    const series = d[asset];
-    if (!series || !series.timestamps.length) return;
-    // Find the price line dataset for this asset
-    const ds = simChart.data.datasets.find(dd => dd.label === asset && dd.yAxisID === 'yR');
-    if (!ds) return;
-    // Save original data for restore
-    if (!ds._origData) ds._origData = ds.data;
-    // Merge: keep original points outside the detail range, replace inside with detail
-    const detailData = series.timestamps.map((ts, i) => ({ x: new Date(ts).getTime(), y: series.prices[i] }));
-    const outside = ds._origData.filter(p => p.x < fromMs || p.x > toMs);
-    // Inject trade entry/exit prices so scatter dots sit exactly on the line
-    const detailSet = new Set(detailData.map(p => p.x));
-    _simTradesFull.forEach(t => {
-      if (t.asset !== asset) return;
-      const eMs = new Date(t.entry_ts).getTime();
-      const xMs = t.exit_ts ? new Date(t.exit_ts).getTime() : 0;
-      if (!detailSet.has(eMs) && eMs >= fromMs && eMs <= toMs) detailData.push({ x: eMs, y: t.entry_price });
-      if (xMs && !detailSet.has(xMs) && xMs >= fromMs && xMs <= toMs) detailData.push({ x: xMs, y: t.exit_price });
-    });
-    const merged = [...outside, ...detailData].sort((a, b) => a.x - b.x);
-    ds.data = merged;
+    for (const asset of assets) {
+      const series = d[asset];
+      if (!series || !series.timestamps.length) continue;
+      const ds = simChart.data.datasets.find(dd => dd.label === asset && dd.yAxisID === 'yR');
+      if (!ds) continue;
+      if (!ds._origData) ds._origData = ds.data;
+      const detailData = series.timestamps.map((ts, i) => ({ x: new Date(ts).getTime(), y: series.prices[i] }));
+      const outside = ds._origData.filter(p => p.x < fromMs || p.x > toMs);
+      // Inject trade entry/exit prices so scatter dots sit exactly on the line
+      const detailSet = new Set(detailData.map(p => p.x));
+      _simTradesFull.forEach(t => {
+        if (t.asset !== asset) return;
+        const eMs = new Date(t.entry_ts).getTime();
+        const xMs = t.exit_ts ? new Date(t.exit_ts).getTime() : 0;
+        if (!detailSet.has(eMs) && eMs >= fromMs && eMs <= toMs) detailData.push({ x: eMs, y: t.entry_price });
+        if (xMs && !detailSet.has(xMs) && xMs >= fromMs && xMs <= toMs) detailData.push({ x: xMs, y: t.exit_price });
+      });
+      ds.data = [...outside, ...detailData].sort((a, b) => a.x - b.x);
+    }
     simChart.update('none');
   } catch (e) { console.warn('Detail candles failed:', e); }
 }
@@ -1237,10 +1291,10 @@ function renderSimChart() {
             onZoomComplete: () => {
               const btn = document.getElementById('sim-chart-reset-zoom');
               if (btn) btn.style.display = '';
-              _updateInspectorLines();
+              _syncChartsOnZoom();
             }
           },
-          pan: { enabled: true, mode: 'x', onPanComplete: () => _updateInspectorLines() },
+          pan: { enabled: true, mode: 'x', onPanComplete: () => _syncChartsOnZoom() },
         },
         legend: {
           display: true,
@@ -1346,6 +1400,13 @@ function renderCapitalChart(equityPoints, isCapital) {
         simTradeSelect(clickedIdx);
       },
       plugins: {
+        zoom: {
+          zoom: {
+            wheel: { enabled: true, speed: 0.08 }, pinch: { enabled: true }, mode: 'x',
+            onZoomComplete: () => _syncFromCapitalChart(),
+          },
+          pan: { enabled: true, mode: 'x', onPanComplete: () => _syncFromCapitalChart() },
+        },
         legend: { display: false },
         tooltip: {
           backgroundColor: '#18232e', borderColor: 'rgba(0,255,65,0.3)', borderWidth: 1,
