@@ -693,10 +693,19 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
         </div>
       </div>
 
-      <!-- Sim Chart -->
+      <!-- Kapital Chart -->
+      <div class="card mb14" id="sim-capital-chart-card" style="display:none;">
+        <div class="card-hd">
+          <span class="card-title">Kapitalverlauf</span>
+          <span class="badge badge-b" id="sim-capital-chart-badge">—</span>
+        </div>
+        <div class="chart-wrap h160"><canvas id="simCapitalChart"></canvas></div>
+      </div>
+
+      <!-- Asset Chart -->
       <div class="card mb14" id="sim-chart-card" style="display:none;">
         <div class="card-hd">
-          <span class="card-title">Equity Kurve</span>
+          <span class="card-title">Asset Kurve</span>
           <span class="badge badge-b" id="sim-chart-badge">—</span>
           <span style="font-size:10px;color:var(--text-dim);margin-left:auto;margin-right:8px;">Scrollen = Zoom · Drag = Pan</span>
           <button class="btn btn-ghost btn-sm" id="sim-chart-reset-zoom" style="display:none" onclick="if(simChart){_removeDetailCandles();simChart.resetZoom();this.style.display='none';simTradeSelect(null);}">↺ Reset</button>
@@ -934,7 +943,7 @@ const CHART_DEFAULTS = {
   }
 };
 
-let balanceChart, plChart, simChart;
+let balanceChart, plChart, simChart, simCapitalChart;
 
 function getOrCreate(id) {
   const existing = Chart.getChart(id);
@@ -980,9 +989,25 @@ const ASSET_COLORS = {
   NATURALGAS: '#9b59b6',
 };
 
+// Zoom-dependent point radius: more zoom → bigger points
+function _zoomRadius(chart, scaleId, data, minR, maxR) {
+  if (!data.length) return minR;
+  const scale = chart.scales[scaleId];
+  if (!scale) return minR;
+  const dataMin = data[0].x, dataMax = data[data.length - 1].x;
+  const totalRange = dataMax - dataMin;
+  if (totalRange <= 0) return maxR;
+  const zf = totalRange / (scale.max - scale.min); // >1 = zoomed in
+  if (zf >= 20) return maxR;
+  if (zf >= 5)  return minR + (maxR - minR) * 0.7;
+  if (zf >= 2)  return minR + (maxR - minR) * 0.3;
+  return minR;
+}
+
 function simChartHighlight(tradeIdx, rowEl) {
   _simHoverTradeIdx = (tradeIdx == null) ? null : Number(tradeIdx);
   if (simChart) simChart.update('none');
+  if (simCapitalChart) simCapitalChart.update('none');
   document.querySelectorAll('.tbl tr.chart-hover').forEach(r => r.classList.remove('chart-hover'));
   if (rowEl) rowEl.classList.add('chart-hover');
 }
@@ -991,6 +1016,7 @@ function simChartHighlightFromChart(tradeIdx) {
   if (tradeIdx === _simHoverTradeIdx) return;
   _simHoverTradeIdx = tradeIdx;
   if (simChart) simChart.update('none');
+  if (simCapitalChart) simCapitalChart.update('none');
   document.querySelectorAll('.tbl tr.chart-hover').forEach(r => r.classList.remove('chart-hover'));
   if (tradeIdx == null) return;
   let row = document.querySelector(`.tbl tr[data-trade-idx="${tradeIdx}"]`);
@@ -1149,10 +1175,26 @@ function _updateInspectorLines() {
   }
 
   simChart.update('none');
+
+  // Update capital chart inspector lines
+  if (simCapitalChart) {
+    const dsCapEntry = simCapitalChart.data.datasets.find(d => d._capInspect === 'entry');
+    const dsCapExit  = simCapitalChart.data.datasets.find(d => d._capInspect === 'exit');
+    if (dsCapEntry) dsCapEntry.data = [];
+    if (dsCapExit)  dsCapExit.data = [];
+    if (t) {
+      const capYMin = simCapitalChart.scales.y.min;
+      const capYMax = simCapitalChart.scales.y.max;
+      const entryMs = new Date(t.entry_ts).getTime();
+      const exitMs  = new Date(t.exit_ts || t.entry_ts).getTime();
+      if (dsCapEntry) dsCapEntry.data = [{ x: entryMs, y: capYMin }, { x: entryMs, y: capYMax }];
+      if (dsCapExit)  dsCapExit.data  = [{ x: exitMs,  y: capYMin }, { x: exitMs,  y: capYMax }];
+    }
+    simCapitalChart.update('none');
+  }
 }
 
-function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
-  isCapital = !!isCapital;
+function renderSimChart() {
   _simHoverTradeIdx = null;
   _simSelectedTradeIdx = null;
   const resetBtn = document.getElementById('sim-chart-reset-zoom');
@@ -1160,36 +1202,15 @@ function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
 
   const ctx = getOrCreate('simChart');
 
-  const yFmtCapital = v => isCapital
-    ? '€\u202f' + Number(v).toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2})
-    : Number(v).toFixed(4);
-
   const tsFmt = v => {
     const d = new Date(v);
     return d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})
       + ' ' + d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
   };
 
-  const datasets = [
-    {
-      label: isCapital ? 'Kapital' : 'Kum. PnL',
-      yAxisID: 'yL',
-      data: equityPoints,
-      borderColor: '#3b82f6', borderWidth: 2,
-      backgroundColor: 'rgba(59,130,246,0.07)', fill: true, tension: 0,
-      pointRadius:          ctx => (ctx.raw?.tradeIdx != null && ctx.raw.tradeIdx === _simHoverTradeIdx) ? 9 : 0,
-      pointHoverRadius:     ctx => (ctx.raw?.tradeIdx != null && ctx.raw.tradeIdx === _simHoverTradeIdx) ? 11 : 4,
-      pointBackgroundColor: ctx => (ctx.raw?.tradeIdx != null && ctx.raw.tradeIdx === _simHoverTradeIdx) ? '#f5c542' : '#3b82f6',
-      pointBorderColor:     ctx => (ctx.raw?.tradeIdx != null && ctx.raw.tradeIdx === _simHoverTradeIdx) ? '#fff' : '#3b82f6',
-      pointBorderWidth:     ctx => (ctx.raw?.tradeIdx != null && ctx.raw.tradeIdx === _simHoverTradeIdx) ? 2 : 0,
-      order: 10,
-    }
-  ];
-  // TP/SL markers are only shown on asset curves (loadAssetCurves), not on the capital line
-
   simChart = new Chart(ctx, {
     type: 'line',
-    data: { datasets },
+    data: { datasets: [] },
     options: {
       responsive: true, maintainAspectRatio: false,
       onHover: (event, elements) => {
@@ -1235,7 +1256,6 @@ function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
               const raw = item.raw;
               const v   = typeof raw === 'object' ? raw.y : raw;
               const ds  = item.dataset.label;
-              if (ds === 'Kapital' || ds === 'Kum. PnL') return `${ds}: ${yFmtCapital(v)}`;
               // Trade scatter points
               if (ds === '_hidden' && raw && raw.asset) {
                 const dir = raw.dir === 'BUY' ? '▲' : '▼';
@@ -1243,7 +1263,7 @@ function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
               }
               if (ds === '_hidden') return null;
               // Asset price line
-              return `${ds}: ${Number(v).toFixed(4)}`;
+              return `${ds}: ${Number(v).toFixed(2)}`;
             }
           }
         }
@@ -1258,17 +1278,94 @@ function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
             callback: v => tsFmt(v)
           }
         },
-        yL: {
-          position: 'left',
-          grid: { color: 'rgba(255,255,255,0.04)' },
-          ticks: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' }, callback: yFmtCapital }
-        },
         yR: {
           position: 'right',
-          display: false, // shown only when asset curves are added
-          grid: { drawOnChartArea: false },
+          grid: { color: 'rgba(255,255,255,0.04)' },
           ticks: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' },
             callback: v => Number(v).toFixed(2) }
+        }
+      }
+    }
+  });
+}
+
+function renderCapitalChart(equityPoints, isCapital) {
+  const ctx = getOrCreate('simCapitalChart');
+
+  const yFmt = v => isCapital
+    ? '€\u202f' + Number(v).toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2})
+    : Number(v).toFixed(4);
+
+  const tsFmt = v => {
+    const d = new Date(v);
+    return d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})
+      + ' ' + d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+  };
+
+  simCapitalChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: isCapital ? 'Kapital' : 'Kum. PnL',
+          data: equityPoints,
+          borderColor: '#3b82f6', borderWidth: 2,
+          backgroundColor: 'rgba(59,130,246,0.07)', fill: true, tension: 0,
+          pointRadius:          ctx => {
+            const idx = ctx.raw?.tradeIdx;
+            if (idx == null) return 0;
+            if (idx === _simSelectedTradeIdx) return 7;
+            if (idx === _simHoverTradeIdx)    return 5;
+            return _zoomRadius(ctx.chart, 'x', ctx.dataset.data, 0, 4);
+          },
+          pointHoverRadius: 4,
+          pointBackgroundColor: ctx => {
+            const idx = ctx.raw?.tradeIdx;
+            if (idx != null && idx === _simSelectedTradeIdx) return '#f5c542';
+            if (idx != null && idx === _simHoverTradeIdx)    return '#fff';
+            return '#3b82f6';
+          },
+          pointBorderColor: ctx => (ctx.raw?.tradeIdx != null && (ctx.raw.tradeIdx === _simHoverTradeIdx || ctx.raw.tradeIdx === _simSelectedTradeIdx)) ? '#fff' : '#3b82f6',
+          pointBorderWidth: ctx => (ctx.raw?.tradeIdx != null && (ctx.raw.tradeIdx === _simHoverTradeIdx || ctx.raw.tradeIdx === _simSelectedTradeIdx)) ? 2 : 0,
+          order: 10,
+        },
+        // Inspector: entry vertical
+        { _capInspect: 'entry', label: '_hidden', data: [], borderColor: 'rgba(255,255,255,0.5)', borderWidth: 1.5, borderDash: [], pointRadius: 0, fill: false, order: 5 },
+        // Inspector: exit vertical
+        { _capInspect: 'exit', label: '_hidden', data: [], borderColor: 'rgba(245,197,66,0.5)', borderWidth: 1.5, borderDash: [], pointRadius: 0, fill: false, order: 5 },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      onClick: (event, elements) => {
+        let clickedIdx = null;
+        for (const el of elements) {
+          const pt = simCapitalChart.data.datasets[el.datasetIndex].data[el.index];
+          if (pt && pt.tradeIdx != null) { clickedIdx = pt.tradeIdx; break; }
+        }
+        simTradeSelect(clickedIdx);
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#18232e', borderColor: 'rgba(0,255,65,0.3)', borderWidth: 1,
+          titleColor: '#c9d1d9', bodyColor: '#00ff41',
+          callbacks: {
+            title: items => tsFmt(items[0].parsed.x),
+            label: item => {
+              if (item.dataset.label === '_hidden') return null;
+              return `${item.dataset.label}: ${yFmt(item.parsed.y)}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: 'linear', display: false,
+        },
+        y: {
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          ticks: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' }, callback: yFmt }
         }
       }
     }
@@ -1344,7 +1441,7 @@ async function loadAssetCurves(inputDb, assets, tl, startTs, endTs) {
           const idx = ctx.raw.tradeIdx;
           if (idx === _simSelectedTradeIdx) return 7;
           if (idx === _simHoverTradeIdx)    return 5;
-          return 3;
+          return _zoomRadius(ctx.chart, 'x', ctx.dataset.data, 1.5, 5);
         },
         pointHoverRadius: 5,
         backgroundColor: ctx => {
@@ -1877,6 +1974,7 @@ async function startSim() {
     _simLiveTrades = {};
     document.getElementById('sim-progress-wrap').style.display = '';
     document.getElementById('sim-result-row').style.display = 'none';
+    document.getElementById('sim-capital-chart-card').style.display = 'none';
     document.getElementById('sim-chart-card').style.display = 'none';
     document.getElementById('sim-trades-card').style.display = 'none';
     document.getElementById('sim-start-btn').style.display = 'none';
@@ -2074,19 +2172,16 @@ function showSimResults(r) {
       ${fin.margin_call?'<div class="notif err" style="margin-top:10px;">MARGIN CALL – Kapital aufgebraucht</div>':''}`;
   }
 
-  // Equity curve – aus trade_list mit Unix-Timestamps aufbauen
+  // Charts – aus trade_list aufbauen
   const tl = r.trade_list || [];
   if (tl.length > 0) {
-    document.getElementById('sim-chart-card').style.display = '';
     const badge = `${(r.start_ts||'').slice(0,10)} – ${(r.end_ts||'').slice(0,10)}`;
-    setText('sim-chart-badge', badge);
-
     const isCapital = fin.start_capital != null;
     const toMs = ts => ts ? new Date(ts).getTime() : 0;
 
+    // Capital / PnL curve
     let running = isCapital ? (fin.start_capital || 0) : 0;
     const equityPoints = [{ x: toMs(r.start_ts), y: running }];
-
     tl.forEach((t, i) => {
       running += isCapital ? (t.netto_pnl_eur ?? 0) : (t.pnl || 0);
       running  = isCapital ? Math.round(running * 100) / 100 : Math.round(running * 10000) / 10000;
@@ -2094,7 +2189,14 @@ function showSimResults(r) {
                            asset: t.asset, dir: t.direction, conf: t.confidence });
     });
 
-    renderSimChart(equityPoints, null, null, isCapital);
+    document.getElementById('sim-capital-chart-card').style.display = '';
+    setText('sim-capital-chart-badge', badge);
+    renderCapitalChart(equityPoints, isCapital);
+
+    // Asset chart (empty, filled by loadAssetCurves)
+    document.getElementById('sim-chart-card').style.display = '';
+    setText('sim-chart-badge', badge);
+    renderSimChart();
 
     // Load asset price overlays asynchronously
     const assets = r._history_meta?.assets?.length
