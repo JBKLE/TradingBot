@@ -1079,8 +1079,13 @@ function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
               const v   = typeof raw === 'object' ? raw.y : raw;
               const ds  = item.dataset.label;
               if (ds === 'Kapital' || ds === 'Kum. PnL') return `${ds}: ${yFmtCapital(v)}`;
-              if ((ds === 'TP' || ds === 'SL') && raw.asset)
-                return `${ds} · ${raw.asset} ${raw.dir} conf ${raw.conf}`;
+              // Trade entry/exit scatter points
+              if (ds === '_hidden' && raw && raw._type) {
+                const dir  = raw.dir === 'BUY' ? '▲' : '▼';
+                const type = raw._type === 'exit' ? 'Exit' : 'Entry';
+                return `${type} · ${raw.asset} ${dir} ${Number(v).toFixed(2)} · Conf ${raw.conf}`;
+              }
+              if (ds === '_hidden') return null;
               // Asset price line
               return `${ds}: ${Number(v).toFixed(4)}`;
             }
@@ -1133,13 +1138,17 @@ async function loadAssetCurves(inputDb, assets, tl, startTs, endTs) {
     tradesByAsset[t.asset].push({ ...t, tradeIdx: i });
   });
 
+  // Performance tier
+  const totalTrades = tl.length;
+  const tier = totalTrades < 100 ? 'full' : totalTrades <= 500 ? 'medium' : 'minimal';
+
   const newDatasets = [];
   for (const asset of assets) {
     const series = data[asset];
     if (!series || !series.timestamps.length) continue;
     const color = ASSET_COLORS[asset] || '#888';
 
-    // Price line
+    // 1) Price line
     newDatasets.push({
       label: asset,
       yAxisID: 'yR',
@@ -1150,40 +1159,148 @@ async function loadAssetCurves(inputDb, assets, tl, startTs, endTs) {
       order: 20,
     });
 
-    // Trade scatter points for this asset
     const assetTrades = tradesByAsset[asset] || [];
-    if (assetTrades.length) {
-      const scatterData = assetTrades.map(t => {
-        const st = (t.status || '').toLowerCase();
-        return {
-          x:         new Date(t.exit_ts || t.entry_ts).getTime(),
-          y:         t.exit_price ?? t.entry_price,
-          tradeIdx:  t.tradeIdx,
-          asset:     t.asset,
-          dir:       t.direction,
-          conf:      t.confidence,
-          status:    t.status,
-          isTP:      st.includes('tp'),
-        };
-      });
+    if (!assetTrades.length) continue;
+
+    // Prepare per-trade data arrays
+    const entryPts = [], exitPts = [], spanData = [], tpData = [], slData = [];
+    assetTrades.forEach(t => {
+      const st       = (t.status || '').toLowerCase();
+      const isTP     = st.includes('tp');
+      const isSL     = st.includes('sl');
+      const entryMs  = new Date(t.entry_ts).getTime();
+      const exitMs   = new Date(t.exit_ts || t.entry_ts).getTime();
+      const meta     = { tradeIdx: t.tradeIdx, asset: t.asset, dir: t.direction, conf: t.confidence, status: t.status, isTP };
+
+      // Entry point
+      entryPts.push({ x: entryMs, y: t.entry_price, _type: 'entry', ...meta });
+
+      // Exit point (only if we have an exit)
+      if (t.exit_ts) {
+        exitPts.push({ x: exitMs, y: t.exit_price, _type: 'exit', ...meta });
+      }
+
+      // Entry→Exit connector line (NaN-separated segments)
+      if (t.exit_ts) {
+        spanData.push({ x: entryMs, y: t.entry_price, tradeIdx: t.tradeIdx, isTP });
+        spanData.push({ x: exitMs,  y: t.exit_price,  tradeIdx: t.tradeIdx, isTP });
+        spanData.push({ x: NaN, y: NaN });
+      }
+
+      // TP level line
+      if (t.tp_price) {
+        tpData.push({ x: entryMs, y: t.tp_price, tradeIdx: t.tradeIdx });
+        tpData.push({ x: exitMs,  y: t.tp_price, tradeIdx: t.tradeIdx });
+        tpData.push({ x: NaN, y: NaN });
+      }
+
+      // SL level line
+      if (t.sl_price) {
+        slData.push({ x: entryMs, y: t.sl_price, tradeIdx: t.tradeIdx });
+        slData.push({ x: exitMs,  y: t.sl_price, tradeIdx: t.tradeIdx });
+        slData.push({ x: NaN, y: NaN });
+      }
+    });
+
+    // 2) Entry scatter – triangles (▲ BUY / ▼ SELL)
+    newDatasets.push({
+      label: '_hidden', yAxisID: 'yR', type: 'scatter', data: entryPts,
+      pointStyle: ctx => ctx.raw.dir === 'BUY' ? 'triangle' : 'triangle',
+      rotation:   ctx => ctx.raw.dir === 'BUY' ? 0 : 180,
+      pointRadius:      ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? 10 : 5,
+      pointHoverRadius: 8,
+      backgroundColor:  ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? '#fff'
+        : (ctx.raw.dir === 'BUY' ? 'rgba(0,255,65,0.9)' : 'rgba(255,59,59,0.9)'),
+      borderColor: ctx => ctx.raw.dir === 'BUY' ? 'rgba(0,255,65,0.5)' : 'rgba(255,59,59,0.5)',
+      borderWidth: 1.5, order: 2,
+    });
+
+    // 3) Exit scatter – circles (green TP / red SL / gray closed_end)
+    if (exitPts.length) {
       newDatasets.push({
-        label: `${asset} Trades`,
-        yAxisID: 'yR',
-        type: 'scatter',
-        data: scatterData,
+        label: '_hidden', yAxisID: 'yR', type: 'scatter', data: exitPts,
+        pointStyle: 'circle',
         pointRadius:      ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? 10 : 6,
         pointHoverRadius: 9,
-        backgroundColor: ctx => {
-          const r = ctx.raw;
-          if (r.tradeIdx === _simHoverTradeIdx) return '#fff';
-          return r.isTP ? 'rgba(0,255,65,0.85)' : 'rgba(255,59,59,0.85)';
+        backgroundColor:  ctx => {
+          if (ctx.raw.tradeIdx === _simHoverTradeIdx) return '#fff';
+          const st = (ctx.raw.status || '').toLowerCase();
+          if (st.includes('tp'))  return 'rgba(0,255,65,0.85)';
+          if (st.includes('sl'))  return 'rgba(255,59,59,0.85)';
+          return 'rgba(128,128,128,0.7)';
         },
         borderColor: ctx => {
-          const r = ctx.raw;
-          return r.isTP ? 'rgba(0,255,65,0.5)' : 'rgba(255,59,59,0.5)';
+          const st = (ctx.raw.status || '').toLowerCase();
+          if (st.includes('tp'))  return 'rgba(0,255,65,0.5)';
+          if (st.includes('sl'))  return 'rgba(255,59,59,0.5)';
+          return 'rgba(128,128,128,0.4)';
         },
-        borderWidth: 1.5,
-        order: 1,
+        borderWidth: 1.5, order: 1,
+      });
+    }
+
+    // 4) Trade span connector lines (entry → exit)
+    if (spanData.length && tier !== 'minimal') {
+      newDatasets.push({
+        label: '_hidden', yAxisID: 'yR', type: 'line', data: spanData,
+        borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0, fill: false,
+        spanGaps: false,
+        segment: {
+          borderColor: ctx => {
+            const idx = ctx.p0?.$context?.raw?.tradeIdx;
+            const hovered = idx != null && idx === _simHoverTradeIdx;
+            const isTP = ctx.p0?.$context?.raw?.isTP;
+            if (hovered) return 'rgba(255,255,255,0.8)';
+            return isTP ? 'rgba(0,255,65,0.25)' : 'rgba(255,59,59,0.25)';
+          },
+          borderWidth: ctx => {
+            const idx = ctx.p0?.$context?.raw?.tradeIdx;
+            return (idx != null && idx === _simHoverTradeIdx) ? 2.5 : 1;
+          },
+        },
+        order: 15,
+      });
+    }
+
+    // Helper: segment visibility for TP/SL lines based on tier
+    const levelSegment = (baseColor, hoverColor) => ({
+      borderColor: ctx => {
+        const idx = ctx.p0?.$context?.raw?.tradeIdx;
+        const hovered = idx != null && idx === _simHoverTradeIdx;
+        if (hovered) return hoverColor;
+        if (tier === 'full') return baseColor;
+        // medium/minimal: only visible on hover
+        return 'rgba(0,0,0,0)';
+      },
+      borderWidth: ctx => {
+        const idx = ctx.p0?.$context?.raw?.tradeIdx;
+        return (idx != null && idx === _simHoverTradeIdx) ? 2 : 1;
+      },
+      borderDash: ctx => {
+        const idx = ctx.p0?.$context?.raw?.tradeIdx;
+        return (idx != null && idx === _simHoverTradeIdx) ? [6, 3] : [4, 4];
+      },
+    });
+
+    // 5) TP level lines (dashed green)
+    if (tpData.length) {
+      newDatasets.push({
+        label: '_hidden', yAxisID: 'yR', type: 'line', data: tpData,
+        borderColor: 'rgba(0,255,65,0.35)', borderDash: [4, 4], borderWidth: 1,
+        pointRadius: 0, pointHoverRadius: 0, fill: false, spanGaps: false,
+        segment: levelSegment('rgba(0,255,65,0.35)', 'rgba(0,255,65,0.9)'),
+        order: 14,
+      });
+    }
+
+    // 6) SL level lines (dashed red)
+    if (slData.length) {
+      newDatasets.push({
+        label: '_hidden', yAxisID: 'yR', type: 'line', data: slData,
+        borderColor: 'rgba(255,59,59,0.35)', borderDash: [4, 4], borderWidth: 1,
+        pointRadius: 0, pointHoverRadius: 0, fill: false, spanGaps: false,
+        segment: levelSegment('rgba(255,59,59,0.35)', 'rgba(255,59,59,0.9)'),
+        order: 14,
       });
     }
   }

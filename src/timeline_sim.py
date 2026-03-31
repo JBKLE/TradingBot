@@ -573,6 +573,8 @@ class TimelineSimulator:
                     "exit_ts":     t.get("exit_timestamp", ""),
                     "entry_price": t["entry_price"],
                     "exit_price":  t.get("exit_price", 0),
+                    "sl_price":    t.get("sl_price", 0),
+                    "tp_price":    t.get("tp_price", 0),
                     "pnl":            round(t.get("pnl") or 0, 4),
                     "r_multiple":     round(t.get("r_multiple") or 0, 3),
                     "status":         t.get("status", ""),

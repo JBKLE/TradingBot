@@ -917,7 +917,8 @@ def create_api() -> FastAPI:
                 conn = _sq.connect(output_db_path, timeout=5)
                 rows = conn.execute(
                     """SELECT asset, direction, entry_timestamp, exit_timestamp,
-                              entry_price, exit_price, pnl, r_multiple, status
+                              entry_price, exit_price, pnl, r_multiple, status,
+                              sl_price, tp_price
                        FROM sim_trades
                        WHERE sl_variant = 'dqn_timeline'
                        ORDER BY entry_timestamp ASC"""
@@ -934,6 +935,8 @@ def create_api() -> FastAPI:
                         "pnl":         row[6],
                         "r_multiple":  row[7],
                         "status":      row[8],
+                        "sl_price":    row[9] if len(row) > 9 else 0,
+                        "tp_price":    row[10] if len(row) > 10 else 0,
                         "confidence":  None,
                         "netto_pnl_eur": None,
                         "capital_after": None,
