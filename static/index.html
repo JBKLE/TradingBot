@@ -1069,6 +1069,15 @@ async function _loadDetailCandles(asset, fromMs, toMs) {
     // Merge: keep original points outside the detail range, replace inside with detail
     const detailData = series.timestamps.map((ts, i) => ({ x: new Date(ts).getTime(), y: series.prices[i] }));
     const outside = ds._origData.filter(p => p.x < fromMs || p.x > toMs);
+    // Inject trade entry/exit prices so scatter dots sit exactly on the line
+    const detailSet = new Set(detailData.map(p => p.x));
+    _simTradesFull.forEach(t => {
+      if (t.asset !== asset) return;
+      const eMs = new Date(t.entry_ts).getTime();
+      const xMs = t.exit_ts ? new Date(t.exit_ts).getTime() : 0;
+      if (!detailSet.has(eMs) && eMs >= fromMs && eMs <= toMs) detailData.push({ x: eMs, y: t.entry_price });
+      if (xMs && !detailSet.has(xMs) && xMs >= fromMs && xMs <= toMs) detailData.push({ x: xMs, y: t.exit_price });
+    });
     const merged = [...outside, ...detailData].sort((a, b) => a.x - b.x);
     ds.data = merged;
     simChart.update('none');
