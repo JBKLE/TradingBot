@@ -603,6 +603,18 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
           <label class="toggle"><input type="checkbox" id="sim-fin-toggle" onchange="toggleFinancial()"><span class="toggle-sl"></span></label>
         </div>
 
+        <!-- SL/TP (immer sichtbar) -->
+        <div class="form-grid mb14">
+          <div class="f-field">
+            <label>Stop-Loss (%)</label>
+            <input type="number" id="sim-sl-pct" value="0.3" min="0.05" max="5" step="0.05">
+          </div>
+          <div class="f-field">
+            <label>Take-Profit (%)</label>
+            <input type="number" id="sim-tp-pct" value="0.5" min="0.05" max="10" step="0.05">
+          </div>
+        </div>
+
         <!-- Financial fields (hidden by default) -->
         <div id="sim-fin-fields" style="display:none;" class="form-grid mb14">
           <div class="f-field">
@@ -616,10 +628,6 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
           <div class="f-field">
             <label>Hebel</label>
             <input type="number" id="sim-leverage" value="20" min="1" max="200" step="1">
-          </div>
-          <div class="f-field">
-            <label>EUR/USD Kurs</label>
-            <input type="number" id="sim-eurusd" value="1.08" min="0.8" max="1.5" step="0.01">
           </div>
           <div class="f-field" style="grid-column:span 2;display:flex;align-items:flex-end;gap:8px;">
             <button class="btn btn-ghost btn-sm" onclick="loadFinancialDefaults()">Von Capital.com laden</button>
@@ -997,8 +1005,6 @@ function simChartHighlightFromChart(tradeIdx) {
 }
 
 function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
-  tpPts    = tpPts    || [];
-  slPts    = slPts    || [];
   isCapital = !!isCapital;
   _simHoverTradeIdx = null;
   const resetBtn = document.getElementById('sim-chart-reset-zoom');
@@ -1016,8 +1022,6 @@ function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
       + ' ' + d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
   };
 
-  const hasMarkers = tpPts.length > 0 || slPts.length > 0;
-
   const datasets = [
     {
       label: isCapital ? 'Kapital' : 'Kum. PnL',
@@ -1033,20 +1037,7 @@ function renderSimChart(equityPoints, tpPts, slPts, isCapital) {
       order: 10,
     }
   ];
-  if (tpPts.length) datasets.push({
-    label: 'TP',  yAxisID: 'yL', type: 'scatter', data: tpPts,
-    pointRadius: ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? 9 : 5,
-    pointHoverRadius: 8,
-    backgroundColor: ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? '#fff' : 'rgba(0,255,65,0.85)',
-    borderColor: 'rgba(0,255,65,0.5)', borderWidth: 1, order: 2,
-  });
-  if (slPts.length) datasets.push({
-    label: 'SL', yAxisID: 'yL', type: 'scatter', data: slPts,
-    pointRadius: ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? 9 : 5,
-    pointHoverRadius: 8,
-    backgroundColor: ctx => ctx.raw.tradeIdx === _simHoverTradeIdx ? '#fff' : 'rgba(255,59,59,0.85)',
-    borderColor: 'rgba(255,59,59,0.5)', borderWidth: 1, order: 2,
-  });
+  // TP/SL markers are only shown on asset curves (loadAssetCurves), not on the capital line
 
   simChart = new Chart(ctx, {
     type: 'line',
@@ -1690,8 +1681,9 @@ async function startSim() {
     body.capital  = parseFloat(document.getElementById('sim-capital').value) || null;
     body.risk_pct = (parseFloat(document.getElementById('sim-risk').value) || 1) / 100;
     body.leverage = parseInt(document.getElementById('sim-leverage').value) || null;
-    body.eur_usd  = parseFloat(document.getElementById('sim-eurusd').value) || 1.08;
   }
+  body.sl_pct = (parseFloat(document.getElementById('sim-sl-pct').value) || 0.3) / 100;
+  body.tp_pct = (parseFloat(document.getElementById('sim-tp-pct').value) || 0.5) / 100;
 
   try {
     const d = await apiFetch('/api/run-timeline-sim', { method: 'POST', body: JSON.stringify(body) });
@@ -1703,7 +1695,7 @@ async function startSim() {
     _simLastInputDb = inputDb || 'simLastCharts.db';
     _simLastAssets  = assets && assets.length ? assets : ['GOLD','SILVER','OIL_CRUDE','NATURALGAS'];
     const modelName = modelPath ? modelPath.split('/').pop().split('\\').pop() : 'neuestes Modell';
-    addSimLog('ok', `Simulation gestartet · Modell: ${modelName} · Assets: ${assets?.join(',')||'alle'} · Conf ≥ ${conf} · DB-In: ${inputDb||'default'} · DB-Out: ${outputDb||'default'}`);
+    addSimLog('ok', `Simulation gestartet · Modell: ${modelName} · Assets: ${assets?.join(',')||'alle'} · Conf ≥ ${conf} · SL ${(body.sl_pct*100).toFixed(2)}% · TP ${(body.tp_pct*100).toFixed(2)}% · DB-In: ${inputDb||'default'} · DB-Out: ${outputDb||'default'}`);
     if (finOn) addSimLog('ok', `Finanzrechnung: ${body.capital}€ · Risiko ${(body.risk_pct*100).toFixed(1)}% · Hebel ${body.leverage}`);
     switchLog('sim');
     _simLiveTrades = {};
@@ -1918,20 +1910,15 @@ function showSimResults(r) {
 
     let running = isCapital ? (fin.start_capital || 0) : 0;
     const equityPoints = [{ x: toMs(r.start_ts), y: running }];
-    const tpPts = [], slPts = [];
 
     tl.forEach((t, i) => {
       running += isCapital ? (t.netto_pnl_eur ?? 0) : (t.pnl || 0);
       running  = isCapital ? Math.round(running * 100) / 100 : Math.round(running * 10000) / 10000;
-      const pt = { x: toMs(t.exit_ts || t.entry_ts), y: running, tradeIdx: i,
-                   asset: t.asset, dir: t.direction, conf: t.confidence };
-      equityPoints.push(pt);
-      const st = (t.status || '').toLowerCase();
-      if      (st.includes('tp')) tpPts.push(pt);
-      else if (st.includes('sl')) slPts.push(pt);
+      equityPoints.push({ x: toMs(t.exit_ts || t.entry_ts), y: running, tradeIdx: i,
+                           asset: t.asset, dir: t.direction, conf: t.confidence });
     });
 
-    renderSimChart(equityPoints, tpPts, slPts, isCapital);
+    renderSimChart(equityPoints, null, null, isCapital);
 
     // Load asset price overlays asynchronously
     const assets = r._history_meta?.assets?.length
@@ -2038,6 +2025,7 @@ async function loadSimHistory() {
           <div style="font-size:11px;color:var(--text-dim);">${assets} · Conf ≥ ${r.confidence_threshold||'—'} · ${r.trades||0} Trades · WR ${(r.win_rate||0).toFixed(1)}% ${fin?'· '+fin:''}</div>
         </div>
         ${canLoad ? `<button class="btn btn-ghost btn-sm" onclick="loadSimRun(${r.id}, event)">Laden</button>` : ''}
+        <button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:var(--red);" onclick="deleteSimRun(${r.id}, event)" title="Löschen">✕</button>
       </div>`;
     }).join('');
   } catch(e) {
@@ -2059,6 +2047,22 @@ async function loadSimRun(runId, evt) {
     alert('Laden fehlgeschlagen: ' + e.message);
   } finally {
     btn.textContent = 'Laden'; btn.disabled = false;
+  }
+}
+
+async function deleteSimRun(runId, evt) {
+  evt.stopPropagation();
+  if (!confirm(`Simulation #${runId} wirklich löschen?`)) return;
+  const btn = evt.target;
+  btn.disabled = true;
+  try {
+    const d = await apiFetch(`/api/sim-history/${runId}`, { method: 'DELETE' });
+    if (d.error) { alert('Fehler: ' + d.error); return; }
+    loadSimHistory();
+  } catch(e) {
+    alert('Löschen fehlgeschlagen: ' + e.message);
+  } finally {
+    btn.disabled = false;
   }
 }
 

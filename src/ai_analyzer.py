@@ -151,9 +151,8 @@ def calculate_trade_financials(
     risk_pct: float,
     leverage: int,
     spread: float | None = None,
-    eur_usd: float = 1.08,
 ) -> dict:
-    """Berechnet die finanzielle Auswirkung eines Trades.
+    """Berechnet die finanzielle Auswirkung eines Trades (alles in EUR).
 
     Args:
         asset: Asset-Key (GOLD, SILVER, ...)
@@ -165,7 +164,6 @@ def calculate_trade_financials(
         risk_pct: Risiko pro Trade (z.B. 0.01 = 1%)
         leverage: Hebel (z.B. 20)
         spread: Spread in Preis-Einheiten (None = Default)
-        eur_usd: EUR/USD Kurs fuer Umrechnung
 
     Returns:
         Dict mit lot_size, position_value_eur, margin_eur,
@@ -183,24 +181,17 @@ def calculate_trade_financials(
     risk_amount_eur = capital * risk_pct
 
     # Lotgroesse: wie viele Einheiten kann ich kaufen, sodass SL = risk_amount
-    # P&L in USD = lot_size * price_change_usd
-    # risk_amount_eur * eur_usd = lot_size * sl_distance
-    lot_size = (risk_amount_eur * eur_usd) / sl_distance
+    lot_size = risk_amount_eur / sl_distance
 
-    # Positionswert in USD und EUR
-    position_value_usd = lot_size * entry_price
-    position_value_eur = position_value_usd / eur_usd
-
-    # Margin (gebundenes Kapital)
+    # Positionswert und Margin in EUR
+    position_value_eur = lot_size * entry_price
     margin_eur = position_value_eur / leverage
 
-    # Brutto-P&L: lot_size * exit_pnl (in USD), dann in EUR
-    brutto_pnl_usd = lot_size * exit_pnl
-    brutto_pnl_eur = brutto_pnl_usd / eur_usd
+    # Brutto-P&L in EUR
+    brutto_pnl_eur = lot_size * exit_pnl
 
     # Spread-Kosten (einmal beim Einstieg)
-    spread_cost_usd = lot_size * spread
-    spread_cost_eur = spread_cost_usd / eur_usd
+    spread_cost_eur = lot_size * spread
 
     # Netto-P&L
     netto_pnl_eur = brutto_pnl_eur - spread_cost_eur
@@ -488,7 +479,6 @@ class DQNAnalyzer:
         capital: float | None = None,
         risk_pct: float | None = None,
         leverage: int | None = None,
-        eur_usd: float = 1.08,
     ) -> dict:
         """Backtest: DQN-Inferenz zum Zeitpunkt eines historischen Trades.
 
@@ -507,7 +497,6 @@ class DQNAnalyzer:
             capital: Kapital in EUR (None = keine Finanzrechnung)
             risk_pct: Risiko pro Trade (z.B. 0.01 = 1%)
             leverage: Hebel (z.B. 20)
-            eur_usd: EUR/USD Kurs
         """
         opens, highs, lows, closes = await self._load_candles_from_db(
             asset, before_timestamp=entry_timestamp,
@@ -596,7 +585,6 @@ class DQNAnalyzer:
                 capital=capital,
                 risk_pct=risk_pct,
                 leverage=leverage,
-                eur_usd=eur_usd,
             )
 
         return result

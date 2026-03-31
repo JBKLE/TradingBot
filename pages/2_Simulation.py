@@ -66,7 +66,7 @@ with _ac4:
 # ── Finanz-Einstellungen ─────────────────────────────────────────────────
 sim_fin_enabled = st.checkbox("Finanzrechnung aktivieren", key="sim_fin_enabled")
 if sim_fin_enabled:
-    _fc1, _fc2, _fc3, _fc4 = st.columns(4)
+    _fc1, _fc2, _fc3 = st.columns(3)
     with _fc1:
         _sim_capital = st.number_input("Startkapital (€):", value=1000.0, min_value=100.0,
                                        step=100.0, key="sim_capital")
@@ -76,11 +76,8 @@ if sim_fin_enabled:
     with _fc3:
         _sim_leverage = st.number_input("Hebel:", value=20, min_value=1, max_value=100,
                                          step=1, key="sim_leverage")
-    with _fc4:
-        _sim_eur_usd = st.number_input("EUR/USD:", value=1.08, min_value=0.80, max_value=1.50,
-                                        step=0.01, key="sim_eur_usd")
 else:
-    _sim_capital, _sim_risk, _sim_leverage, _sim_eur_usd = 1000.0, 0.01, 20, 1.08
+    _sim_capital, _sim_risk, _sim_leverage = 1000.0, 0.01, 20
 
 # ── Start-Button ─────────────────────────────────────────────────────────
 if st.button("◈ SIMULATION STARTEN", type="primary", use_container_width=True):
@@ -98,7 +95,6 @@ if st.button("◈ SIMULATION STARTEN", type="primary", use_container_width=True)
         _payload["capital"] = _sim_capital
         _payload["risk_pct"] = _sim_risk
         _payload["leverage"] = _sim_leverage
-        _payload["eur_usd"] = _sim_eur_usd
 
     try:
         r = httpx.post(f"{BOT_API_URL}/api/simulation/start", json=_payload, timeout=10)

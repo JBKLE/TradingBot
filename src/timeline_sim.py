@@ -34,8 +34,8 @@ from .fetch_history import HISTORY_DB_PATH
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIDENCE_THRESHOLD = 8
-SL_PCT = 0.003
-TP_PCT = 0.005
+DEFAULT_SL_PCT = 0.003
+DEFAULT_TP_PCT = 0.005
 PROGRESS_EVERY = 500   # update progress counters every N minutes
 FLUSH_EVERY    = 2000  # flush closed trades to DB every N minutes
 
@@ -53,7 +53,9 @@ class TimelineSimulator:
         capital: float | None = None,
         risk_pct: float | None = None,
         leverage: int | None = None,
-        eur_usd: float = 1.08,
+        # SL/TP percentages
+        sl_pct: float = DEFAULT_SL_PCT,
+        tp_pct: float = DEFAULT_TP_PCT,
         # Output DB for trades (None = same as db_path)
         output_db_path: str | None = None,
     ) -> None:
@@ -70,7 +72,8 @@ class TimelineSimulator:
         self.capital   = capital
         self.risk_pct  = risk_pct
         self.leverage  = leverage
-        self.eur_usd   = eur_usd
+        self.sl_pct    = sl_pct
+        self.tp_pct    = tp_pct
         self.fin_enabled = capital is not None and risk_pct is not None and leverage is not None
         # Live stats – written from worker thread, read from API thread (GIL-safe)
         self.current_minute:   int = 0
@@ -240,7 +243,7 @@ class TimelineSimulator:
             None,
             self._simulate_sync,
             asset_candles, asset_timestamps, timeline, progress_callback,
-            self.capital, self.risk_pct, self.leverage, self.eur_usd,
+            self.capital, self.risk_pct, self.leverage, self.sl_pct, self.tp_pct,
         )
         return result
 
@@ -255,7 +258,8 @@ class TimelineSimulator:
         capital:   float | None = None,
         risk_pct:  float | None = None,
         leverage:  int   | None = None,
-        eur_usd:   float = 1.08,
+        sl_pct:    float = DEFAULT_SL_PCT,
+        tp_pct:    float = DEFAULT_TP_PCT,
     ) -> dict:
         asset_ts_index = {
             asset: {ts: i for i, ts in enumerate(asset_timestamps[asset])}
@@ -344,7 +348,6 @@ class TimelineSimulator:
                                 capital=running_capital,
                                 risk_pct=risk_pct,
                                 leverage=leverage,
-                                eur_usd=eur_usd,
                             )
                             running_capital += fin["netto_pnl_eur"]
                             self.current_capital = running_capital
@@ -391,8 +394,8 @@ class TimelineSimulator:
                     if action_id in (1, 2) and confidence >= self.confidence_threshold:
                         direction = "BUY" if action_id == 1 else "SELL"
                         trade_id += 1
-                        sl = c_close * (1 - SL_PCT) if direction == "BUY" else c_close * (1 + SL_PCT)
-                        tp = c_close * (1 + TP_PCT) if direction == "BUY" else c_close * (1 - TP_PCT)
+                        sl = c_close * (1 - sl_pct) if direction == "BUY" else c_close * (1 + sl_pct)
+                        tp = c_close * (1 + tp_pct) if direction == "BUY" else c_close * (1 - tp_pct)
                         open_trades[asset] = {
                             "id":              trade_id,
                             "asset":           asset,
@@ -423,7 +426,6 @@ class TimelineSimulator:
                     capital=running_capital,
                     risk_pct=risk_pct,
                     leverage=leverage,
-                    eur_usd=eur_usd,
                 )
                 running_capital += fin["netto_pnl_eur"]
                 self.current_capital = running_capital
