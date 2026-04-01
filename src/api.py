@@ -110,7 +110,6 @@ def create_api() -> FastAPI:
         capital: float | None = None,
         risk_pct: float | None = None,
         leverage: int | None = None,
-        eur_usd: float = 1.08,
     ):
         """Backtest: DQN-Inferenz zum Zeitpunkt eines historischen Trades.
 
@@ -121,7 +120,6 @@ def create_api() -> FastAPI:
             capital: Kapital in EUR (optional, fuer Finanzrechnung)
             risk_pct: Risiko pro Trade in Dezimal (z.B. 0.01 = 1%)
             leverage: Hebel (z.B. 20)
-            eur_usd: EUR/USD Kurs
         """
         try:
             if source == "sim":
@@ -163,7 +161,6 @@ def create_api() -> FastAPI:
                 capital=capital,
                 risk_pct=risk_pct,
                 leverage=leverage,
-                eur_usd=eur_usd,
             )
 
             if "error" in result:
@@ -701,7 +698,9 @@ def create_api() -> FastAPI:
         capital:  float | None = None
         risk_pct: float | None = None
         leverage: int   | None = None
-        eur_usd:  float = 1.08
+        # SL/TP percentages
+        sl_pct:   float = 0.003
+        tp_pct:   float = 0.005
         # Input DB (price data source, basename only)
         input_db:  str | None = None
         # Output DB filename (basename only, resolved inside DATA_DIR)
@@ -750,7 +749,8 @@ def create_api() -> FastAPI:
             capital=body.capital,
             risk_pct=body.risk_pct,
             leverage=body.leverage,
-            eur_usd=body.eur_usd,
+            sl_pct=body.sl_pct,
+            tp_pct=body.tp_pct,
             output_db_path=output_db_path,
         )
         _sim_task_state["simulator"] = sim
@@ -820,7 +820,8 @@ def create_api() -> FastAPI:
                     capital=body.capital,
                     risk_pct=body.risk_pct,
                     leverage=body.leverage,
-                    eur_usd=body.eur_usd,
+                    sl_pct=body.sl_pct,
+                    tp_pct=body.tp_pct,
                     total_minutes=result.get("total_minutes", 0),
                     trades=result.get("trades", 0),
                     wins=result.get("wins", 0),
@@ -883,6 +884,15 @@ def create_api() -> FastAPI:
         from .sim_log import load_runs
         return {"runs": load_runs(limit=limit)}
 
+    @app.delete("/api/sim-history/{run_id}")
+    async def delete_sim_run(run_id: int):
+        """Einen Simulation-Run aus der Historie löschen."""
+        from .sim_log import delete_run
+        ok = delete_run(run_id)
+        if not ok:
+            return {"error": f"Run #{run_id} nicht gefunden oder Löschfehler"}
+        return {"deleted": True, "id": run_id}
+
     @app.get("/api/sim-history/{run_id}/load")
     async def load_sim_run(run_id: int):
         """Einen gespeicherten Run inkl. Trades aus der Output-DB rekonstruieren."""
@@ -907,7 +917,8 @@ def create_api() -> FastAPI:
                 conn = _sq.connect(output_db_path, timeout=5)
                 rows = conn.execute(
                     """SELECT asset, direction, entry_timestamp, exit_timestamp,
-                              entry_price, exit_price, pnl, r_multiple, status
+                              entry_price, exit_price, pnl, r_multiple, status,
+                              sl_price, tp_price
                        FROM sim_trades
                        WHERE sl_variant = 'dqn_timeline'
                        ORDER BY entry_timestamp ASC"""
@@ -924,6 +935,8 @@ def create_api() -> FastAPI:
                         "pnl":         row[6],
                         "r_multiple":  row[7],
                         "status":      row[8],
+                        "sl_price":    row[9] if len(row) > 9 else 0,
+                        "tp_price":    row[10] if len(row) > 10 else 0,
                         "confidence":  None,
                         "netto_pnl_eur": None,
                         "capital_after": None,

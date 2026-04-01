@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS sim_runs (
     capital              REAL,
     risk_pct             REAL,
     leverage             INTEGER,
-    eur_usd              REAL,
+    sl_pct               REAL,
+    tp_pct               REAL,
     -- Simulationsergebnisse
     total_minutes        INTEGER,
     trades               INTEGER,
@@ -65,6 +66,12 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(SIM_HISTORY_DB, timeout=10)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(_CREATE_SQL)
+    # Migration: neue Spalten sl_pct/tp_pct hinzufügen falls fehlend
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(sim_runs)").fetchall()}
+    if "sl_pct" not in existing:
+        conn.execute("ALTER TABLE sim_runs ADD COLUMN sl_pct REAL")
+    if "tp_pct" not in existing:
+        conn.execute("ALTER TABLE sim_runs ADD COLUMN tp_pct REAL")
     conn.commit()
     return conn
 
@@ -88,7 +95,8 @@ def save_run(
     capital: float | None = None,
     risk_pct: float | None = None,
     leverage: int | None = None,
-    eur_usd: float = 1.08,
+    sl_pct: float = 0.003,
+    tp_pct: float = 0.005,
     # Ergebnisse
     total_minutes: int = 0,
     trades: int = 0,
@@ -112,7 +120,7 @@ def save_run(
             run_at, finished_at, duration_sec, status,
             model_name, model_path, model_modified_at,
             assets, start_date, end_date, confidence_threshold, output_db,
-            capital, risk_pct, leverage, eur_usd,
+            capital, risk_pct, leverage, sl_pct, tp_pct,
             total_minutes, trades, wins, losses, win_rate,
             total_pnl_points, avg_r_multiple,
             start_capital, end_capital, total_return_pct, max_drawdown_pct,
@@ -126,7 +134,7 @@ def save_run(
             model_name, model_path, model_modified_at,
             json.dumps(assets or []), start_date, end_date,
             confidence_threshold, output_db,
-            capital, risk_pct, leverage, eur_usd,
+            capital, risk_pct, leverage, sl_pct, tp_pct,
             total_minutes, trades, wins, losses, round(win_rate, 2),
             round(total_pnl_points, 4), round(avg_r_multiple, 4),
             start_capital, end_capital,
@@ -141,6 +149,19 @@ def save_run(
     row_id = cur.lastrowid
     conn.close()
     return row_id
+
+
+def delete_run(run_id: int) -> bool:
+    """Einen Run anhand seiner ID aus sim_history.db löschen."""
+    try:
+        conn = _connect()
+        cur = conn.execute("DELETE FROM sim_runs WHERE id = ?", (run_id,))
+        conn.commit()
+        deleted = cur.rowcount > 0
+        conn.close()
+        return deleted
+    except Exception:
+        return False
 
 
 def load_runs(limit: int = 50) -> list[dict]:
