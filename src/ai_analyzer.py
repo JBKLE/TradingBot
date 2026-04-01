@@ -35,10 +35,10 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 # ── Konstanten (identisch zu TradeAI/rl_agent/environment.py) ─────────────────
-MAX_WINDOW = 500
+MAX_WINDOW = 100
 ASSETS = ["GOLD", "SILVER", "OIL_CRUDE", "NATURALGAS"]
 ASSET_INDEX = {a: i for i, a in enumerate(ASSETS)}
-STATE_SIZE = MAX_WINDOW * 5 + 4 + 4 + 4  # 2512
+STATE_SIZE = MAX_WINDOW * 5 + 4 + 4 + 4  # 512
 ACTION_SIZE = 4
 ACTIONS = {0: "HOLD", 1: "BUY", 2: "SELL", 3: "CLOSE"}
 
@@ -266,7 +266,7 @@ class DQNAnalyzer:
         asset: str,
         before_timestamp: str | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Liest die letzten 500 Kerzen aus price_history (simulation.db).
+        """Liest die letzten 100 Kerzen aus price_history (simulation.db).
 
         Args:
             asset: Asset-Key (z.B. "GOLD")
