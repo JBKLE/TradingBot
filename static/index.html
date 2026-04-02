@@ -1103,7 +1103,7 @@ function simTradeSelect(tradeIdx) {
   if (_simSelectedTradeIdx === tradeIdx) {
     _simSelectedTradeIdx = null;
     document.querySelectorAll('#sim-trades-card .tbl tr.chart-selected').forEach(r => r.classList.remove('chart-selected'));
-    if (simChartCtx) { simChartCtx.removeDetailCandles(); simChartCtx.resetZoom(); simChartCtx.updateInspectorLines(); }
+    if (simChartCtx) { simChartCtx.resetZoom(); simChartCtx.updateInspectorLines(); }
     return;
   }
   _simSelectedTradeIdx = tradeIdx;
@@ -1734,6 +1734,7 @@ function ensureTrdCharts() {
     getSelectedIdx: () => _trdSelectedIdx,
     getHoverIdx:    () => _trdHoverIdx,
     getTradeList:   () => _trdTradesFull,
+    onResetZoom:    () => loadTrdAssetCurves(), // reload last 200 candles
   });
   trdCharts.setDetailDb('trades.db');
 }
@@ -1757,9 +1758,12 @@ async function loadTrdAssetCurves() {
   if (loading) loading.style.display = 'inline';
   setText('trd-asset-badge', 'Lade...');
   try {
+    // Default view: last 200 minutes (zoom out loads more via loadVisibleRange)
+    const startMs = Date.now() - 200 * 60 * 1000;
+    const startIso = new Date(startMs).toISOString();
     await trdCharts.loadAssetCurves(
-      '/api/sim/candles?db=trades.db',
-      assets, _trdTradesFull, '', ''
+      '/api/sim/candles?db=trades.db&max_points=2000',
+      assets, _trdTradesFull, startIso, ''
     );
     setText('trd-asset-badge', assets.join(', '));
   } catch(e) {
@@ -1774,7 +1778,7 @@ function trdTradeSelect(idx) {
   if (_trdSelectedIdx === idx) {
     _trdSelectedIdx = null;
     document.querySelectorAll('#trd-closed-body .tbl tr.chart-selected').forEach(r => r.classList.remove('chart-selected'));
-    if (trdCharts) { trdCharts.removeDetailCandles(); trdCharts.resetZoom(); trdCharts.updateInspectorLines(); }
+    if (trdCharts) { trdCharts.resetZoom(); trdCharts.updateInspectorLines(); }
     return;
   }
   _trdSelectedIdx = idx;

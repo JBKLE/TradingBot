@@ -407,31 +407,27 @@ const ChartModule = (() => {
       }
     }
 
-    /* ── detail candle loading (zoom-in) ──────────────────── */
+    /* ── dynamic range loading (zoom/pan) ───────────────── */
     function setDetailDb(dbPath) { _detailDbPath = dbPath; }
 
     function debouncedDetailLoad(xMin, xMax) {
       if (_detailDebounce) clearTimeout(_detailDebounce);
-      _detailDebounce = setTimeout(() => loadDetailRange(xMin, xMax), 250);
+      _detailDebounce = setTimeout(() => loadVisibleRange(xMin, xMax), 300);
     }
 
-    async function loadDetailRange(fromMs, toMs) {
+    /**
+     * Fetches candles for the visible range from the DB.
+     * Called on every zoom/pan — replaces dataset contents in-place.
+     * Near live edge: extends range to now+1min for fresh data.
+     */
+    async function loadVisibleRange(fromMs, toMs) {
       if (!_detailDbPath || !assetChart || fromMs == null || toMs == null) return;
-      const allData = assetChart.data.datasets.find(ds => ds._origData || (ds.yAxisID === 'yR' && ds.label !== '_hidden'));
-      if (!allData) return;
-      const origData = allData._origData || allData.data;
-      if (!origData.length) return;
-      const totalRange = origData[origData.length - 1].x - origData[0].x;
-      const visibleRange = toMs - fromMs;
-      if (totalRange <= 0) return;
-      // Near live edge: always fetch fresh data (extend toMs to now+1min)
-      const nearLive = (Date.now() - toMs) < 5 * 60 * 1000;
-      if (nearLive) toMs = Date.now() + 60000;
-      // Only fetch detail if zoomed in enough (or near live edge)
-      if (totalRange / visibleRange < 1.5 && !nearLive) { removeDetailCandles(); assetChart.update('none'); return; }
+
+      // Near live edge: extend to now
+      if ((Date.now() - toMs) < 5 * 60 * 1000) toMs = Date.now() + 60000;
 
       const assets = assetChart.data.datasets
-        .filter(ds => ds.yAxisID === 'yR' && ds.label !== '_hidden' && !ds._inspectId && !ds._detailId)
+        .filter(ds => ds.yAxisID === 'yR' && ds.label !== '_hidden' && !ds._inspectId)
         .map(ds => ds.label);
       if (!assets.length) return;
 
@@ -441,7 +437,7 @@ const ChartModule = (() => {
         const d = await apiFetch(
           `/api/sim/candles?db=${encodeURIComponent(_detailDbPath)}`
           + `&assets=${encodeURIComponent(assets.join(','))}`
-          + `&start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(endIso)}&max_points=5000`
+          + `&start=${encodeURIComponent(startIso)}&end=${encodeURIComponent(endIso)}&max_points=2000`
         );
         const tl = getTrades();
         for (const asset of assets) {
@@ -449,34 +445,25 @@ const ChartModule = (() => {
           if (!series || !series.timestamps.length) continue;
           const ds = assetChart.data.datasets.find(dd => dd.label === asset && dd.yAxisID === 'yR');
           if (!ds) continue;
-          if (!ds._origData) ds._origData = [...ds.data]; // snapshot (copy)
-          const detailData = series.timestamps.map((ts, i) => ({ x: new Date(ts).getTime(), y: series.prices[i] }));
-          const outside = ds._origData.filter(p => p.x < fromMs || p.x > toMs);
-          const detailSet = new Set(detailData.map(p => p.x));
+          const newData = series.timestamps.map((ts, i) => ({ x: new Date(ts).getTime(), y: series.prices[i] }));
+          // Inject trade entry points
+          const tradeSet = new Set(newData.map(p => p.x));
           for (const t of tl) {
             if (t.asset !== asset) continue;
             const eMs = new Date(t.entry_ts).getTime();
-            if (!detailSet.has(eMs) && eMs >= fromMs && eMs <= toMs) detailData.push({ x: eMs, y: t.entry_price });
+            if (!tradeSet.has(eMs) && eMs >= fromMs && eMs <= toMs) newData.push({ x: eMs, y: t.entry_price });
           }
-          // Replace array contents in-place (preserves Chart.js internal reference)
-          const merged = [...outside, ...detailData].sort((a, b) => a.x - b.x);
+          newData.sort((a, b) => a.x - b.x);
+          // Replace in-place (preserves Chart.js reference)
           ds.data.length = 0;
-          ds.data.push(...merged);
+          ds.data.push(...newData);
         }
         assetChart.update('none');
-      } catch (e) { console.warn('Detail candles failed:', e); }
+      } catch (e) { console.warn('loadVisibleRange failed:', e); }
     }
 
     function removeDetailCandles() {
-      if (!assetChart) return;
-      assetChart.data.datasets.forEach(ds => {
-        if (ds._origData) {
-          // Restore original data in-place (preserve array reference)
-          ds.data.length = 0;
-          ds.data.push(...ds._origData);
-          delete ds._origData;
-        }
-      });
+      // No-op now — kept for API compatibility (resetZoom still calls it)
     }
 
     /* ── trade select helper (zoom to trade) ──────────────── */
@@ -497,64 +484,48 @@ const ChartModule = (() => {
 
     /* ── reset zoom ───────────────────────────────────────── */
     function resetZoom() {
-      removeDetailCandles();
       if (assetChart)  assetChart.resetZoom();
       if (equityChart) equityChart.resetZoom();
       if (opts.resetBtnId) {
         const btn = document.getElementById(opts.resetBtnId);
         if (btn) btn.style.display = 'none';
       }
+      // Fire onReset callback so the page can reload its default range
+      if (opts.onResetZoom) opts.onResetZoom();
     }
 
     /* ── live price append ────────────────────────────────── */
     /**
-     * Append live price points to all matching asset datasets.
-     * Auto-scrolls if user is near the live edge.
-     *
-     * Best practices (Chart.js docs):
-     *  - mutate ds.data in-place with push(), never replace the array
-     *  - call chart.update('none') exactly once after all mutations
-     *  - zoomScale() already calls update() internally — skip extra update
+     * Append a live price point to the asset dataset.
+     * If user is near the right edge, auto-scrolls to keep new data visible.
      */
     function appendLivePrice(asset, tsMs, price) {
       if (!assetChart) return;
       const ds = assetChart.data.datasets.find(
-        dd => dd.label === asset && dd.yAxisID === 'yR' && !dd._inspectId && !dd._detailId
+        dd => dd.label === asset && dd.yAxisID === 'yR' && !dd._inspectId
       );
       if (!ds) return;
 
-      // Chart.js renders ds.data — always push there
-      const activeData = ds.data;
-      const pt = { x: tsMs, y: price };
+      const data = ds.data;
+      // Deduplicate
+      if (data.length && data[data.length - 1].x >= tsMs) return;
+      data.push({ x: tsMs, y: price });
 
-      // Deduplicate: skip if last point is same or newer
-      if (activeData.length && activeData[activeData.length - 1].x >= tsMs) return;
-      activeData.push(pt);
-
-      // Also keep _origData in sync (backup for zoom-reset)
-      if (ds._origData && ds._origData !== activeData) {
-        ds._origData.push(pt);
-      }
-
-      // Decide: auto-scroll or just redraw?
+      // Auto-scroll if zoomed and near the live edge
       const xScale = assetChart.scales.x;
       const isZoomed = assetChart.isZoomedOrPanned && assetChart.isZoomedOrPanned();
-
       if (isZoomed && xScale) {
-        // If user was near the live edge, shift the window forward
-        const margin = 3 * 60 * 1000; // 3 min
-        const prevLast = activeData.length >= 2 ? activeData[activeData.length - 2].x : tsMs;
+        const margin = 3 * 60 * 1000;
+        const prevLast = data.length >= 2 ? data[data.length - 2].x : tsMs;
         if (xScale.max >= prevLast - margin) {
           const visRange = xScale.max - xScale.min;
-          // zoomScale calls update() internally — no extra update needed
           assetChart.zoomScale('x', {
             min: tsMs - visRange + margin / 3,
             max: tsMs + margin / 3,
           });
-          return; // zoomScale already rendered
+          return; // zoomScale already calls update
         }
       }
-      // Not zoomed or not at live edge — Chart.js auto-scales on update
       assetChart.update('none');
     }
 
