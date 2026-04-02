@@ -68,8 +68,11 @@ def create_api() -> FastAPI:
                 broker = await get_shared_broker()
                 account = await broker.get_account_balance()
                 balance = account.balance
-                equity = getattr(account, "equity", account.balance)
                 currency = getattr(account, "currency", "EUR")
+                # Equity = Balance + unrealisierter P/L aus offenen Positionen
+                positions = await broker.get_open_positions()
+                unrealized_pl = sum(p.profit_loss for p in positions)
+                equity = balance + unrealized_pl
             except Exception as broker_exc:
                 logger.warning("Capital.com Kontostand nicht abrufbar: %s – nutze Snapshot", broker_exc)
                 balance = await database.get_latest_balance()
@@ -1450,6 +1453,7 @@ def create_api() -> FastAPI:
     async def close_position(deal_id: str):
         """Eine einzelne offene Position schliessen."""
         try:
+            broker = await get_shared_broker()
             result = await broker.close_position(deal_id)
             logger.info("Position manuell geschlossen: %s", deal_id)
             _trade_event.set()
@@ -1471,6 +1475,7 @@ def create_api() -> FastAPI:
                     "SELECT deal_id, asset FROM trades WHERE status = 'OPEN'"
                 ) as cur:
                     rows = [dict(r) async for r in cur]
+            broker = await get_shared_broker()
             for row in rows:
                 try:
                     await broker.close_position(row["deal_id"])

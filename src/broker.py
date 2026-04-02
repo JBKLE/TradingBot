@@ -182,17 +182,27 @@ class CapitalComBroker:
                 direction = Direction(direction_raw)
             except ValueError:
                 direction = Direction.BUY
+            entry = float(position.get("level", 0))
+            size = float(position.get("size", 0))
+            bid = float(market.get("bid", 0))
+            offer = float(market.get("offer", 0))
+            # BUY: schliessen zum Bid, SELL: schliessen zum Offer
+            current = bid if direction == Direction.BUY else offer
+            if direction == Direction.BUY:
+                upl = (current - entry) * size
+            else:
+                upl = (entry - current) * size
             positions.append(
                 PositionInfo(
                     deal_id=position.get("dealId", ""),
                     epic=market.get("epic", ""),
                     direction=direction,
-                    size=float(position.get("size", 0)),
-                    entry_price=float(position.get("level", 0)),
-                    current_price=float(market.get("bid", 0)),
+                    size=size,
+                    entry_price=entry,
+                    current_price=current,
                     stop_loss=position.get("stopLevel"),
                     take_profit=position.get("limitLevel"),
-                    profit_loss=float(pos.get("position", {}).get("upl", 0)),
+                    profit_loss=upl,
                 )
             )
         return positions
