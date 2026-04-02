@@ -327,6 +327,38 @@ class CapitalComBroker:
         raise CapitalComError(f"Request failed after {_RETRY_ATTEMPTS} attempts: {last_exc}") from last_exc
 
 
+# ── Global singleton ──────────────────────────────────────────────────────────
+_shared_broker: Optional[CapitalComBroker] = None
+_shared_lock: asyncio.Lock = asyncio.Lock()
+
+
+async def get_shared_broker() -> CapitalComBroker:
+    """Return a long-lived shared broker instance (created on first call).
+
+    All API endpoints and the unified_tick share this single session,
+    avoiding repeated POST /session calls that trigger rate limits.
+    """
+    global _shared_broker
+    async with _shared_lock:
+        if _shared_broker is None:
+            _shared_broker = CapitalComBroker()
+            await _shared_broker.__aenter__()
+            logger.info("Shared broker session created")
+        else:
+            await _shared_broker._ensure_session()
+    return _shared_broker
+
+
+async def shutdown_shared_broker() -> None:
+    """Gracefully close the shared broker (call on app shutdown)."""
+    global _shared_broker
+    async with _shared_lock:
+        if _shared_broker is not None:
+            await _shared_broker.__aexit__(None, None, None)
+            _shared_broker = None
+            logger.info("Shared broker session closed")
+
+
 def _mid_price(price_dict: dict) -> float:
     """Return mid price from a Capital.com price dict (bid+ask average)."""
     bid = float(price_dict.get("bid", 0) or 0)

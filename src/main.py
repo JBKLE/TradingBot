@@ -26,11 +26,9 @@ from .sim_engine import (
     evaluate_open_trades,
     is_market_open,
     open_sim_trades,
-    shutdown_broker as sim_shutdown_broker,
-    _get_broker,
 )
 from .ai_analyzer import DQNAnalyzer
-from .broker import CapitalComBroker, CapitalComError
+from .broker import CapitalComBroker, CapitalComError, get_shared_broker, shutdown_shared_broker
 from .executor import TradeExecutor
 from .models import (
     AnalysisResult,
@@ -75,7 +73,7 @@ async def unified_tick() -> None:
     notifier = Notifier()
 
     try:
-        broker = await _get_broker()
+        broker = await get_shared_broker()
 
         # == 1. Preise holen (EINMAL, fuer alles) =============================
         prices = await collect_prices(broker)  # 4 API-Calls → DB
@@ -390,7 +388,7 @@ async def run_scheduler() -> None:
     except (KeyboardInterrupt, SystemExit):
         logger.info("Scheduler stopping...")
         scheduler.shutdown()
-        await sim_shutdown_broker()
+        await shutdown_shared_broker()
 
 
 def main() -> None:

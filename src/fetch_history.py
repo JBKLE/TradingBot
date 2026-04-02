@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 import aiosqlite
 
 from . import config
-from .broker import CapitalComBroker, CapitalComError
+from .broker import CapitalComBroker, CapitalComError, get_shared_broker
 
 logger = logging.getLogger(__name__)
 
@@ -284,25 +284,25 @@ async def fetch_all_assets(
     target_assets = assets or list(config.WATCHLIST.keys())
     results = []
 
-    async with CapitalComBroker() as broker:
-        for asset_key in target_assets:
-            asset_info = config.WATCHLIST.get(asset_key)
-            if not asset_info:
-                logger.warning("Asset %s not in WATCHLIST, skipping", asset_key)
-                continue
+    broker = await get_shared_broker()
+    for asset_key in target_assets:
+        asset_info = config.WATCHLIST.get(asset_key)
+        if not asset_info:
+            logger.warning("Asset %s not in WATCHLIST, skipping", asset_key)
+            continue
 
-            epic = asset_info["epic"]
-            logger.info("Fetching %s (%s) from %s to %s",
-                        asset_key, epic, start_date, end_date)
+        epic = asset_info["epic"]
+        logger.info("Fetching %s (%s) from %s to %s",
+                    asset_key, epic, start_date, end_date)
 
-            result = await fetch_asset_history(
-                broker, asset_key, epic,
-                start_date, end_date, db_path,
-                progress_callback,
-            )
-            results.append(result)
-            logger.info("  %s: fetched=%d, skipped=%d, errors=%d",
-                        asset_key, result["fetched"],
-                        result["skipped"], result["errors"])
+        result = await fetch_asset_history(
+            broker, asset_key, epic,
+            start_date, end_date, db_path,
+            progress_callback,
+        )
+        results.append(result)
+        logger.info("  %s: fetched=%d, skipped=%d, errors=%d",
+                    asset_key, result["fetched"],
+                    result["skipped"], result["errors"])
 
     return results

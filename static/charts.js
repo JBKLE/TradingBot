@@ -262,15 +262,12 @@ const ChartModule = (() => {
         });
 
         if (assetTrades.length) {
-          const scatterData = assetTrades.map(t => {
-            const st = (t.status || '').toLowerCase();
-            return {
-              x: new Date(t.entry_ts).getTime(), y: t.entry_price,
-              tradeIdx: t.tradeIdx, asset: t.asset, dir: t.direction,
-              conf: t.confidence, status: t.status,
-              isTP: st.includes('tp') || st.includes('profit'),
-            };
-          });
+          const scatterData = assetTrades.map(t => ({
+            x: new Date(t.entry_ts).getTime(), y: t.entry_price,
+            tradeIdx: t.tradeIdx, asset: t.asset, dir: t.direction,
+            conf: t.confidence, status: t.status,
+            pnl: t.pnl ?? 0, isOpen: t.status === 'OPEN',
+          }));
           newDatasets.push({
             label: '_hidden', yAxisID: 'yR', type: 'scatter', data: scatterData,
             pointRadius: ctx => {
@@ -280,16 +277,19 @@ const ChartModule = (() => {
               return zoomRadius(ctx.chart, 'x', ctx.dataset.data, 1.5, 5);
             },
             pointHoverRadius: 5,
+            pointStyle: ctx => ctx.raw.isOpen ? 'rectRot' : 'circle',
             backgroundColor: ctx => {
               const r = ctx.raw;
               if (r.tradeIdx === getSelIdx()) return '#f5c542';
               if (r.tradeIdx === getHovIdx()) return '#fff';
-              return r.isTP ? 'rgba(0,255,65,0.85)' : 'rgba(255,59,59,0.85)';
+              if (r.isOpen) return 'rgba(59,130,246,0.9)'; // blue for open
+              return r.pnl >= 0 ? 'rgba(0,255,65,0.85)' : 'rgba(255,59,59,0.85)';
             },
             borderColor: ctx => {
               const r = ctx.raw;
               if (r.tradeIdx === getSelIdx()) return '#fff';
-              return r.isTP ? 'rgba(0,255,65,0.5)' : 'rgba(255,59,59,0.5)';
+              if (r.isOpen) return 'rgba(59,130,246,0.5)';
+              return r.pnl >= 0 ? 'rgba(0,255,65,0.5)' : 'rgba(255,59,59,0.5)';
             },
             borderWidth: ctx => ctx.raw.tradeIdx === getSelIdx() ? 2 : 1,
             order: 1,

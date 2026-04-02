@@ -1472,15 +1472,16 @@ function handleTrdTradeUpdate(trades) {
       </tr>`).join('')}</tbody></table>`;
   }
 
-  // ── Update closed trades table + chart ──
-  _trdTradesFull = closed.map(t => ({
+  // ── Update trades list (open + closed) for chart ──
+  const toChartTrade = t => ({
     asset: t.asset, direction: t.direction,
     entry_ts: t.timestamp, exit_ts: t.exit_timestamp || '',
     entry_price: t.entry_price, exit_price: t.exit_price,
     sl_price: t.stop_loss, tp_price: t.take_profit,
     pnl: t.profit_loss, pnl_pct: t.profit_loss_pct,
     confidence: t.confidence, status: t.status,
-  }));
+  });
+  _trdTradesFull = [...open.map(toChartTrade), ...closed.map(toChartTrade)];
   setText('trd-closed-badge', closed.length + ' Trades');
   if (_trdTradesFull.length) {
     renderTrdTradeTable(true);
@@ -1693,15 +1694,16 @@ async function loadTradingTrades() {
 
     // ── Closed trades table ──
     setText('trd-closed-badge', closed.length + ' Trades');
-    // Normalize to common format for chart module
-    _trdTradesFull = closed.map(t => ({
+    // Normalize to common format for chart module (open + closed)
+    const toChartTrade = t => ({
       asset: t.asset, direction: t.direction,
       entry_ts: t.timestamp, exit_ts: t.exit_timestamp || '',
       entry_price: t.entry_price, exit_price: t.exit_price,
       sl_price: t.stop_loss, tp_price: t.take_profit,
       pnl: t.profit_loss, pnl_pct: t.profit_loss_pct,
       confidence: t.confidence, status: t.status,
-    }));
+    });
+    _trdTradesFull = [...open.map(toChartTrade), ...closed.map(toChartTrade)];
     _trdTradesShown = 0;
     if (_trdTradesFull.length) {
       renderTrdTradeTable(true);
@@ -1758,8 +1760,8 @@ async function loadTrdAssetCurves() {
   if (loading) loading.style.display = 'inline';
   setText('trd-asset-badge', 'Lade...');
   try {
-    // Default view: last 200 minutes (zoom out loads more via loadVisibleRange)
-    const startMs = Date.now() - 200 * 60 * 1000;
+    // Default view: last 30 minutes with best resolution
+    const startMs = Date.now() - 30 * 60 * 1000;
     const startIso = new Date(startMs).toISOString();
     await trdCharts.loadAssetCurves(
       '/api/sim/candles?db=trades.db&max_points=2000',

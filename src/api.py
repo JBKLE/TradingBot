@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from . import config, database
 from .ai_analyzer import DQNAnalyzer, list_available_models, MODEL_VERSIONS, ASSETS
-from .broker import CapitalComBroker, CapitalComError
+from .broker import CapitalComError, get_shared_broker
 from .env_writer import read_env_file, update_env_file
 
 logger = logging.getLogger(__name__)
@@ -65,11 +65,11 @@ def create_api() -> FastAPI:
             currency: str = "EUR"
             demo: bool = config.CAPITAL_DEMO
             try:
-                async with CapitalComBroker() as broker:
-                    account = await broker.get_account_balance()
-                    balance = account.balance
-                    equity = getattr(account, "equity", account.balance)
-                    currency = getattr(account, "currency", "EUR")
+                broker = await get_shared_broker()
+                account = await broker.get_account_balance()
+                balance = account.balance
+                equity = getattr(account, "equity", account.balance)
+                currency = getattr(account, "currency", "EUR")
             except Exception as broker_exc:
                 logger.warning("Capital.com Kontostand nicht abrufbar: %s – nutze Snapshot", broker_exc)
                 balance = await database.get_latest_balance()
@@ -94,22 +94,22 @@ def create_api() -> FastAPI:
     async def trigger_analysis():
         """Sofort-DQN-Analyse aus DB (0 Broker-Calls fuer Inferenz)."""
         try:
-            async with CapitalComBroker() as broker:
-                open_positions = await broker.get_open_positions()
+            broker = await get_shared_broker()
+            open_positions = await broker.get_open_positions()
 
-                # DQN-Inferenz fuer alle 4 Assets (State aus price_history DB)
-                analyzer = DQNAnalyzer()
-                signals = await analyzer.get_all_signals(open_positions)
+            # DQN-Inferenz fuer alle 4 Assets (State aus price_history DB)
+            analyzer = DQNAnalyzer()
+            signals = await analyzer.get_all_signals(open_positions)
 
-                logger.info(
-                    "API-Analyse: %s",
-                    " | ".join(f"{s['asset']}={s['action']}({s['confidence']}/10)" for s in signals),
-                )
-                return {
-                    "signals": signals,
-                    "open_positions": len(open_positions),
-                    "timestamp": datetime.now(tz=config.TZ).isoformat(),
-                }
+            logger.info(
+                "API-Analyse: %s",
+                " | ".join(f"{s['asset']}={s['action']}({s['confidence']}/10)" for s in signals),
+            )
+            return {
+                "signals": signals,
+                "open_positions": len(open_positions),
+                "timestamp": datetime.now(tz=config.TZ).isoformat(),
+            }
 
         except CapitalComError as exc:
             raise HTTPException(502, f"Capital.com API error: {exc}")
@@ -297,10 +297,10 @@ def create_api() -> FastAPI:
             # Preisverlauf nach dem Trade laden
             price_bars_after = None
             try:
-                async with CapitalComBroker() as broker:
-                    price_bars_after = await broker.get_price_history(
-                        trade.epic, resolution="HOUR", max_bars=48,
-                    )
+                broker = await get_shared_broker()
+                price_bars_after = await broker.get_price_history(
+                    trade.epic, resolution="HOUR", max_bars=48,
+                )
             except Exception:
                 pass
 
@@ -408,17 +408,17 @@ def create_api() -> FastAPI:
         """Testet die Capital.com API-Verbindung (Session + Account-Abfrage)."""
         t0 = time.time()
         try:
-            async with CapitalComBroker() as broker:
-                account = await broker.get_account_balance()
-                latency_ms = int((time.time() - t0) * 1000)
-                return {
-                    "status": "ok",
-                    "latency_ms": latency_ms,
-                    "demo": config.CAPITAL_DEMO,
-                    "balance": account.balance,
-                    "currency": account.currency,
-                    "message": f"Verbunden – Balance: {account.balance:.2f} {account.currency}",
-                }
+            broker = await get_shared_broker()
+            account = await broker.get_account_balance()
+            latency_ms = int((time.time() - t0) * 1000)
+            return {
+                "status": "ok",
+                "latency_ms": latency_ms,
+                "demo": config.CAPITAL_DEMO,
+                "balance": account.balance,
+                "currency": account.currency,
+                "message": f"Verbunden – Balance: {account.balance:.2f} {account.currency}",
+            }
         except CapitalComError as exc:
             latency_ms = int((time.time() - t0) * 1000)
             return {
@@ -680,15 +680,15 @@ def create_api() -> FastAPI:
     async def get_financial_defaults():
         """Aktuelle Capital.com Kontoinfos als Vorbelegung für Finanzrechnung."""
         try:
-            async with CapitalComBroker() as broker:
-                account = await broker.get_account_balance()
-                return {
-                    "balance": account.balance,
-                    "currency": account.currency,
-                    "demo": config.CAPITAL_DEMO,
-                    "default_risk_pct": config.MAX_RISK_PER_TRADE_PCT,
-                    "default_leverage": config.BACKTEST_LEVERAGE,
-                }
+            broker = await get_shared_broker()
+            account = await broker.get_account_balance()
+            return {
+                "balance": account.balance,
+                "currency": account.currency,
+                "demo": config.CAPITAL_DEMO,
+                "default_risk_pct": config.MAX_RISK_PER_TRADE_PCT,
+                "default_leverage": config.BACKTEST_LEVERAGE,
+            }
         except Exception as exc:
             return {
                 "balance": config.BACKTEST_CAPITAL,

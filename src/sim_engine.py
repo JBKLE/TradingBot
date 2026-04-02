@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Optional
 
 from . import config
-from .broker import CapitalComBroker, CapitalComError
+from .broker import CapitalComBroker, CapitalComError, get_shared_broker
 from .sim_config import DIRECTIONS, SL_TP_VARIANTS
 from .sim_database import (
     batch_close_sim_trades,
@@ -68,30 +68,9 @@ def is_market_open() -> bool:
     return True
 
 
-# ── Shared broker singleton (avoids creating a new session every minute) ──────
+# ── Shared broker (delegates to broker.py singleton) ──────
 
-_broker: Optional[CapitalComBroker] = None
-
-
-async def _get_broker() -> CapitalComBroker:
-    """Return a long-lived broker instance, creating it on first call."""
-    global _broker
-    if _broker is None:
-        _broker = CapitalComBroker()
-        await _broker.__aenter__()
-        logger.info("Simulation broker session created")
-    else:
-        await _broker._ensure_session()
-    return _broker
-
-
-async def shutdown_broker() -> None:
-    """Gracefully close the shared broker (call on app shutdown)."""
-    global _broker
-    if _broker is not None:
-        await _broker.__aexit__(None, None, None)
-        _broker = None
-        logger.info("Simulation broker session closed")
+_get_broker = get_shared_broker
 
 
 # ── Step A: Collect prices ────────────────────────────────────────────────────

@@ -5,7 +5,7 @@ from typing import Optional
 import httpx
 
 from . import config
-from .models import Trade, TradeStatus
+from .models import Trade
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +19,7 @@ class Notifier:
             logger.info("Notifications disabled (NTFY_TOPIC not set)")
 
     async def notify_trade_opened(self, trade: Trade) -> None:
-        emoji = "🟢"
-        title = f" Trade eröffnet: {trade.asset} {trade.direction.value}"
+        title = f"Trade eroeffnet: {trade.asset} {trade.direction.value}"
         body = (
             f"@ {trade.entry_price:.4f} | "
             f"SL: {trade.stop_loss:.4f} | "
@@ -31,16 +30,8 @@ class Notifier:
         await self._send(title, body, priority="high")
 
     async def notify_trade_closed(self, trade: Trade, exit_price: float, profit_loss: float, profit_loss_pct: float) -> None:
-        status = trade.status
-        if status == TradeStatus.TAKE_PROFIT:
-            emoji = "✅"
-        elif status == TradeStatus.STOPPED_OUT:
-            emoji = "🛑"
-        else:
-            emoji = "🔴"
-
         sign = "+" if profit_loss >= 0 else ""
-        title = f" Trade geschlossen: {trade.asset} {sign}{profit_loss:.2f} EUR"
+        title = f"Trade geschlossen: {trade.asset} {sign}{profit_loss:.2f} EUR"
         body = (
             f"Exit: {exit_price:.4f} | "
             f"P/L: {sign}{profit_loss:.2f} EUR ({sign}{profit_loss_pct:.2f}%) | "
