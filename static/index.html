@@ -687,7 +687,8 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
         <div class="card">
           <div class="card-hd">
             <span class="card-title">Ergebnis</span><span class="badge badge-d" id="sim-result-badge">—</span>
-            <button class="btn btn-primary btn-sm" id="sim-save-btn" style="display:none;margin-left:auto;" onclick="saveSimRun()">Speichern</button>
+            <button class="btn btn-ghost btn-sm" id="sim-csv-btn" style="display:none;margin-left:auto;" onclick="exportSimCsv()">CSV</button>
+            <button class="btn btn-primary btn-sm" id="sim-save-btn" style="display:none;" onclick="saveSimRun()">Speichern</button>
           </div>
           <div id="sim-results"></div>
         </div>
@@ -2234,9 +2235,11 @@ function showSimResults(r, fromHistory) {
   document.getElementById('sim-result-row').style.display = '';
   const saveBtn = document.getElementById('sim-save-btn');
   saveBtn.style.display = fromHistory ? 'none' : '';
+  document.getElementById('sim-csv-btn').style.display = '';
   if (r.error) {
     document.getElementById('sim-results').innerHTML = `<div class="notif err">${r.error}</div>`;
     saveBtn.style.display = 'none';
+    document.getElementById('sim-csv-btn').style.display = 'none';
     return;
   }
   const wr = r.win_rate != null ? r.win_rate.toFixed(1) + '%' : '—';
@@ -2381,6 +2384,29 @@ function loadMoreSimTrades() {
 }
 
 /* ─── SIMULATION HISTORY ──────────────────────────────────── */
+function exportSimCsv() {
+  const tl = _simTradesFull;
+  if (!tl || !tl.length) { alert('Keine Trades vorhanden'); return; }
+  const sep = ';';
+  const cols = ['Asset','Richtung','Entry Zeit','Exit Zeit','Entry Preis','Exit Preis',
+    'SL','TP','PnL Pkt','R-Multiple','Confidence','Close Confidence',
+    'Netto EUR','Kapital danach','Status'];
+  const rows = tl.map(t => [
+    t.asset, t.direction, t.entry_ts, t.exit_ts||'',
+    t.entry_price, t.exit_price??'', t.sl_price??'', t.tp_price??'',
+    t.pnl??'', t.r_multiple??'', t.confidence??'', t.close_confidence??'',
+    t.netto_pnl_eur??'', t.capital_after??'', t.status||''
+  ]);
+  const csv = '\uFEFF' + [cols.join(sep), ...rows.map(r => r.join(sep))].join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const ts = new Date().toISOString().slice(0,16).replace(/[T:]/g,'-');
+  a.download = `sim_trades_${ts}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 async function saveSimRun() {
   const btn = document.getElementById('sim-save-btn');
   btn.textContent = '...'; btn.disabled = true;
