@@ -127,8 +127,8 @@ class TradeSignal(BaseModel):
     epic: str
     direction: Direction
     entry_price: float
-    stop_loss: float
-    take_profit: float
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
     position_size: float
     confidence: int
     reasoning: str

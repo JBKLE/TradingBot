@@ -221,8 +221,15 @@ async def _process_dqn_signals(
                 logger.debug("Signal %s %s rejected by build_signal (RR)", asset, action)
                 continue
 
+            # Bot-Settings SL/TP Override: 999 = deaktiviert → None
+            from .api import _bot_settings
+            if _bot_settings.get("sl_pct", 0) >= 999:
+                signal.stop_loss = None
+            if _bot_settings.get("tp_pct", 0) >= 999:
+                signal.take_profit = None
+
             logger.info(
-                "DQN-Trade: %s %s size=%.2f entry=%.4f SL=%.4f TP=%.4f conf=%d",
+                "DQN-Trade: %s %s size=%.2f entry=%.4f SL=%s TP=%s conf=%d",
                 signal.asset, signal.direction.value, signal.position_size,
                 signal.entry_price, signal.stop_loss, signal.take_profit,
                 signal.confidence,

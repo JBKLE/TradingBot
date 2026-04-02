@@ -58,7 +58,7 @@ class TradeExecutor:
 
         # ── 1b. Spread-Check: illiquide Maerkte meiden ────────────────────────
         spread = market.current_price.ask - market.current_price.bid
-        sl_distance = abs(signal.entry_price - signal.stop_loss)
+        sl_distance = abs(signal.entry_price - signal.stop_loss) if signal.stop_loss else 0
         if sl_distance > 0 and spread > 0:
             spread_to_sl = spread / sl_distance
             if spread_to_sl > 0.3:
@@ -146,8 +146,8 @@ class TradeExecutor:
             epic=signal.epic,
             direction=signal.direction,
             entry_price=actual_entry,
-            stop_loss=signal.stop_loss,
-            take_profit=signal.take_profit,
+            stop_loss=signal.stop_loss or 0.0,
+            take_profit=signal.take_profit or 0.0,
             position_size=signal.position_size,
             confidence=signal.confidence,
             reasoning=signal.reasoning,
@@ -158,7 +158,7 @@ class TradeExecutor:
         trade.id = await database.save_trade(trade)
 
         logger.info(
-            "Trade executed: %s %s %.2f units @ %.4f | SL=%.4f TP=%.4f | deal_id=%s",
+            "Trade executed: %s %s %.2f units @ %.4f | SL=%s TP=%s | deal_id=%s",
             signal.asset,
             signal.direction.value,
             signal.position_size,

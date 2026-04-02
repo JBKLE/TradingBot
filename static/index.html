@@ -590,10 +590,11 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
       </div>
 
       <!-- Asset Kurve -->
-      <div class="card mb14" id="trd-asset-card" style="display:none;">
+      <div class="card mb14" id="trd-asset-card">
         <div class="card-hd">
           <span class="card-title">Asset Kurve</span>
           <span class="badge badge-b" id="trd-asset-badge">—</span>
+          <span id="trd-chart-loading" style="font-size:10px;color:var(--yellow);margin-left:8px;display:none;">Lade Kerzen...</span>
           <span style="font-size:10px;color:var(--text-dim);margin-left:auto;margin-right:8px;">Scrollen = Zoom · Drag = Pan</span>
           <button class="btn btn-ghost btn-sm" id="trd-chart-reset-zoom" style="display:none" onclick="trdCharts.resetZoom();trdTradeSelect(null);">↺ Reset</button>
         </div>
@@ -1396,7 +1397,7 @@ async function loadTradingPage() {
   await updateTrdKPIs();
   await loadTrdModels();
   loadTrdActiveModel();
-  loadTrdSettings();
+  await loadTrdSettings();
   pollTrdSignals();
   loadTradingTrades();
   // Start polling every 30s
@@ -1568,6 +1569,8 @@ async function saveTrdSettings() {
     const el = document.getElementById('trd-settings-saved');
     el.style.display = 'inline';
     setTimeout(() => { el.style.display = 'none'; }, 2000);
+    // Reload asset curves for new asset selection
+    loadTrdAssetCurves();
   } catch(e) { alert('Fehler: ' + e.message); }
 }
 
@@ -1626,15 +1629,8 @@ async function loadTradingTrades() {
   }
 }
 
-function buildTrdCharts(closed) {
-  if (!closed.length) {
-    document.getElementById('trd-asset-card').style.display = 'none';
-    return;
-  }
-
-  // Destroy old
-  if (trdCharts) trdCharts.destroy();
-
+function ensureTrdCharts() {
+  if (trdCharts) return;
   trdCharts = ChartModule.create({
     assetCanvasId:  'trdAssetChart',
     resetBtnId:     'trd-chart-reset-zoom',
@@ -1652,23 +1648,39 @@ function buildTrdCharts(closed) {
     getHoverIdx:    () => _trdHoverIdx,
     getTradeList:   () => _trdTradesFull,
   });
+  trdCharts.setDetailDb('trades.db');
+}
 
-  const first = _trdTradesFull[0]?.entry_ts?.slice(0,10) || '';
-  const last  = _trdTradesFull[_trdTradesFull.length-1]?.exit_ts?.slice(0,10) || '';
-  document.getElementById('trd-asset-card').style.display = '';
-  setText('trd-asset-badge', `${first} – ${last}`);
+function buildTrdCharts(closed) {
+  // Destroy + recreate
+  if (trdCharts) { trdCharts.destroy(); trdCharts = null; }
+  ensureTrdCharts();
   trdCharts.renderAssetChart();
+  // Load curves for active assets
+  loadTrdAssetCurves();
+}
 
-  // Load asset curves from default history DB
-  const assets = [...new Set(_trdTradesFull.map(t => t.asset))];
-  const startTs = _trdTradesFull[0]?.entry_ts || '';
-  const endTs   = _trdTradesFull[_trdTradesFull.length-1]?.exit_ts || '';
-  const inputDb = document.getElementById('sim-input-db')?.value || 'history.db';
-  trdCharts.setDetailDb(inputDb);
-  trdCharts.loadAssetCurves(
-    `/api/sim/candles?db=${encodeURIComponent(inputDb)}`,
-    assets, _trdTradesFull, startTs, endTs
-  );
+async function loadTrdAssetCurves() {
+  ensureTrdCharts();
+  // Ensure assetChart is rendered
+  if (!trdCharts.assetChart) trdCharts.renderAssetChart();
+  const trdAssets = getTrdActiveAssets();
+  const assets = trdAssets || ['GOLD', 'SILVER', 'OIL_CRUDE', 'NATURALGAS'];
+  const loading = document.getElementById('trd-chart-loading');
+  if (loading) loading.style.display = 'inline';
+  setText('trd-asset-badge', 'Lade...');
+  try {
+    await trdCharts.loadAssetCurves(
+      '/api/sim/candles?db=trades.db',
+      assets, _trdTradesFull, '', ''
+    );
+    setText('trd-asset-badge', assets.join(', '));
+  } catch(e) {
+    console.warn('loadTrdAssetCurves:', e);
+    setText('trd-asset-badge', 'Fehler');
+  } finally {
+    if (loading) loading.style.display = 'none';
+  }
 }
 
 function trdTradeSelect(idx) {

@@ -202,19 +202,21 @@ class CapitalComBroker:
         epic: str,
         direction: str,
         size: float,
-        stop_loss: float,
-        take_profit: float,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
     ) -> dict[str, Any]:
         """POST /api/v1/positions – open a new position."""
         await self._ensure_session()
-        payload = {
+        payload: dict[str, Any] = {
             "epic": epic,
             "direction": direction,
             "size": str(size),
             "guaranteedStop": False,
-            "stopLevel": stop_loss,
-            "profitLevel": take_profit,
         }
+        if stop_loss is not None:
+            payload["stopLevel"] = stop_loss
+        if take_profit is not None:
+            payload["profitLevel"] = take_profit
         data = await self._request("POST", "/api/v1/positions", json=payload)
         logger.info(
             "Position opened: epic=%s direction=%s size=%s deal_reference=%s",
