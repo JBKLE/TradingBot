@@ -202,6 +202,15 @@ hr.div { border: none; border-top: 1px solid var(--border-dim); margin: 20px 0; 
 .sc-bar-fill { height: 100%; border-radius: 2px; }
 .sc-meta { font-size: 10px; color: var(--text-dim); margin-top: 4px; display: flex; justify-content: space-between; }
 
+/* Q-Value breakdown bars */
+.sc-qrow { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 10px; }
+.sc-qrow .sc-qlbl { width: 42px; text-align: right; color: var(--text-dim); font-family: 'Share Tech Mono', monospace; flex-shrink: 0; }
+.sc-qrow .sc-qbar { flex: 1; height: 5px; background: var(--bg4); border-radius: 2px; overflow: hidden; position: relative; }
+.sc-qrow .sc-qbar-fill { height: 100%; border-radius: 2px; transition: width .3s; }
+.sc-qrow .sc-qval { width: 38px; text-align: right; color: var(--text-dim); font-family: 'Share Tech Mono', monospace; flex-shrink: 0; }
+.sc-qrow.active .sc-qlbl { color: var(--text); font-weight: 600; }
+.sc-qrow.active .sc-qval { color: var(--text); font-weight: 600; }
+
 /* ─── STATS ROW ──────────────────────────────────────────── */
 .stats-row { display: flex; }
 .stat-item { flex: 1; padding: 10px 14px; border-right: 1px solid var(--border-dim); }
@@ -493,7 +502,7 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
     <!-- ═══ PAGE: TRADING ════════════════════════════════════ -->
     <div class="page" id="page-trading">
 
-      <!-- Modellauswahl -->
+      <!-- Modellauswahl + Aktives Modell -->
       <div class="card mb14">
         <div class="card-hd"><span class="card-title">DQN Modell</span></div>
         <div class="form-grid" style="grid-template-columns:1fr auto;">
@@ -505,6 +514,58 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
           </div>
           <button class="btn btn-primary btn-sm" style="align-self:start;margin-top:2px;" onclick="activateTrdModel()">Aktivieren</button>
         </div>
+        <div id="trd-active-model" style="margin-top:10px;padding:8px 10px;background:var(--bg2);border-radius:var(--r);border:1px solid var(--border-dim);display:none;">
+          <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px;">Aktives Modell</div>
+          <div style="font-size:13px;font-family:'Share Tech Mono',monospace;" id="trd-active-model-name">—</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:2px;" id="trd-active-model-detail"></div>
+        </div>
+      </div>
+
+      <!-- Bot-Einstellungen -->
+      <div class="card mb14">
+        <div class="card-hd"><span class="card-title">Bot-Einstellungen</span></div>
+        <div class="form-grid mb14">
+          <div class="f-field">
+            <label>Min. Konfidenz (1–10)</label>
+            <input type="number" id="trd-conf" value="8" min="1" max="10">
+          </div>
+          <div class="f-field">
+            <label>Assets</label>
+            <div class="multi-select-wrap" id="trd-asset-wrap">
+              <div class="multi-select-trigger" onclick="toggleTrdAssetDropdown()">
+                <span id="trd-asset-label">Alle (4)</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6,9 12,15 18,9"/></svg>
+              </div>
+              <div class="multi-select-menu" id="trd-asset-menu">
+                <label class="multi-opt"><input type="checkbox" id="trd-asset-all" checked onchange="toggleTrdAllAssets(this)"> <span>Alle</span></label>
+                <label class="multi-opt"><input type="checkbox" class="trd-asset-cb" value="GOLD" checked onchange="updateTrdAssetLabel()"> <span>GOLD</span></label>
+                <label class="multi-opt"><input type="checkbox" class="trd-asset-cb" value="SILVER" checked onchange="updateTrdAssetLabel()"> <span>SILVER</span></label>
+                <label class="multi-opt"><input type="checkbox" class="trd-asset-cb" value="OIL_CRUDE" checked onchange="updateTrdAssetLabel()"> <span>OIL_CRUDE</span></label>
+                <label class="multi-opt"><input type="checkbox" class="trd-asset-cb" value="NATURALGAS" checked onchange="updateTrdAssetLabel()"> <span>NATURALGAS</span></label>
+              </div>
+            </div>
+          </div>
+          <div class="f-field">
+            <label>Stop-Loss (%)</label>
+            <input type="number" id="trd-sl-pct" value="999" min="0.05" max="999" step="0.05">
+          </div>
+          <div class="f-field">
+            <label>Take-Profit (%)</label>
+            <input type="number" id="trd-tp-pct" value="999" min="0.05" max="999" step="0.05">
+          </div>
+        </div>
+        <div class="form-grid mb14">
+          <div class="f-field">
+            <label>Risiko pro Trade (%)</label>
+            <input type="number" id="trd-risk" value="1.0" min="0.1" max="10" step="0.1">
+          </div>
+          <div class="f-field">
+            <label>Hebel</label>
+            <input type="number" id="trd-leverage" value="20" min="1" max="200" step="1">
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="saveTrdSettings()">Einstellungen speichern</button>
+        <span id="trd-settings-saved" style="font-size:11px;color:var(--green);margin-left:8px;display:none;">Gespeichert!</span>
       </div>
 
       <!-- Bot Toggle + KPIs -->
@@ -950,6 +1011,7 @@ async function toggleBot() {
     } catch (e) { alert('Fehler: ' + e.message); }
   } else {
     try {
+      await saveTrdSettings(); // Apply current settings before starting
       await apiFetch('/api/bot/start', { method: 'POST' });
       await refreshBotStatus();
     } catch (e) { alert('Fehler: ' + e.message); }
@@ -1118,6 +1180,43 @@ function signalsHtml(signals, compact = false) {
   return `<div class="signal-grid" style="grid-template-columns:${cols};">${items}</div>`;
 }
 
+function trdSignalsHtml(signals) {
+  if (!signals || !signals.length) return '<div class="empty">Keine Signale.</div>';
+  const ACTION_COLORS = {
+    BUY: 'var(--green)', SELL: 'var(--red)', HOLD: 'var(--text-dim)', CLOSE: 'var(--yellow)',
+    CANCEL: 'var(--text-dim)',
+  };
+  const items = signals.map(s => {
+    const a = (s.action || 'HOLD').toUpperCase();
+    const cls = a === 'BUY' ? 'buy' : a === 'SELL' ? 'sell' : 'hold';
+    const sym = a === 'BUY' ? '▲ BUY' : a === 'SELL' ? '▼ SELL' : a === 'CLOSE' ? '✕ CLOSE' : '— HOLD';
+    const qv = s.q_values || {};
+    // Find min/max for scaling
+    const vals = Object.values(qv);
+    const qMin = Math.min(...vals, 0);
+    const qMax = Math.max(...vals, 0.001);
+    const range = qMax - qMin || 1;
+    // Build Q-value rows
+    const qRows = Object.entries(qv).map(([act, val]) => {
+      const isActive = act === a;
+      const pct = ((val - qMin) / range * 100).toFixed(0);
+      const color = ACTION_COLORS[act] || 'var(--text-dim)';
+      return `<div class="sc-qrow${isActive ? ' active' : ''}">
+        <span class="sc-qlbl">${act}</span>
+        <div class="sc-qbar"><div class="sc-qbar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <span class="sc-qval">${val.toFixed(3)}</span>
+      </div>`;
+    }).join('');
+    const conf = s.confidence || 0;
+    return `<div class="signal-card ${cls}">
+      <div class="sc-asset">${s.asset}</div>
+      <div class="sc-action ${cls}">${sym} <span style="font-weight:400;opacity:.7;">(${conf}/10)</span></div>
+      ${qRows}
+    </div>`;
+  }).join('');
+  return `<div class="signal-grid" style="grid-template-columns:1fr 1fr;">${items}</div>`;
+}
+
 /* ─── DASHBOARD PAGE ──────────────────────────────────────── */
 let _snapDays = 7;
 let _lastStatus = null;
@@ -1265,12 +1364,12 @@ async function triggerAnalyze(ctx) {
   try {
     const d = await apiFetch('/api/analyze', { method: 'POST' });
     _lastSignals = d.signals;
-    const compact = ctx === 'trd';
-    document.getElementById(target).innerHTML = signalsHtml(d.signals, compact);
+    document.getElementById(target).innerHTML =
+      ctx === 'trd' ? trdSignalsHtml(d.signals) : signalsHtml(d.signals, false);
     if (ts_el) setText(ts_el, 'Scan: ' + ts2time(d.timestamp));
     // Mirror to other page if loaded
     if (ctx === 'dash' && document.getElementById('trd-signals'))
-      document.getElementById('trd-signals').innerHTML = signalsHtml(d.signals, true);
+      document.getElementById('trd-signals').innerHTML = trdSignalsHtml(d.signals);
     if (ctx === 'trd' && document.getElementById('dash-signals'))
       document.getElementById('dash-signals').innerHTML = signalsHtml(d.signals, false);
   } catch(e) {
@@ -1291,6 +1390,8 @@ async function loadTradingPage() {
   updateTradingBotCard(botRunning);
   updateTrdKPIs();
   await loadTrdModels();
+  loadTrdActiveModel();
+  loadTrdSettings();
   loadTradingTrades();
   // Start polling every 30s
   if (_trdPollInterval) clearInterval(_trdPollInterval);
@@ -1344,6 +1445,99 @@ async function activateTrdModel() {
       method: 'POST',
       body: JSON.stringify({ filename: sel.value })
     });
+    await loadTrdActiveModel();
+  } catch(e) { alert('Fehler: ' + e.message); }
+}
+
+async function loadTrdActiveModel() {
+  try {
+    const d = await apiFetch('/api/models/current');
+    const wrap = document.getElementById('trd-active-model');
+    if (d && d.model_file) {
+      wrap.style.display = '';
+      setText('trd-active-model-name', d.model_file);
+      const c = d.config || {};
+      const actions = c.actions ? Object.values(c.actions).join(', ') : '';
+      setText('trd-active-model-detail',
+        `${d.version} · ${c.max_window} Candles · ${c.action_size} Aktionen (${actions}) · State ${c.state_size}`);
+      // Auto-select assets from model
+      autoSelectTrdAssets(d.asset, d.model_file);
+    } else {
+      wrap.style.display = 'none';
+    }
+  } catch(e) { console.warn('loadTrdActiveModel:', e); }
+}
+
+function autoSelectTrdAssets(modelAsset, filename) {
+  // Detect assets from model filename (like sim does)
+  const ALL = ['GOLD', 'SILVER', 'OIL_CRUDE', 'NATURALGAS'];
+  let detected = [];
+  if (modelAsset) {
+    detected = [modelAsset.toUpperCase()];
+  } else {
+    // Multi-asset model: check filename for asset names
+    const fn = (filename || '').toUpperCase();
+    detected = ALL.filter(a => fn.includes(a));
+    if (detected.length === 0) detected = ALL; // default all
+  }
+  const cbs = document.querySelectorAll('.trd-asset-cb');
+  cbs.forEach(cb => { cb.checked = detected.includes(cb.value); });
+  document.getElementById('trd-asset-all').checked = detected.length === ALL.length;
+  updateTrdAssetLabel();
+}
+
+function toggleTrdAssetDropdown() {
+  document.getElementById('trd-asset-menu').classList.toggle('open');
+}
+function toggleTrdAllAssets(cb) {
+  document.querySelectorAll('.trd-asset-cb').forEach(c => { c.checked = cb.checked; });
+  updateTrdAssetLabel();
+}
+function updateTrdAssetLabel() {
+  const all = document.querySelectorAll('.trd-asset-cb');
+  const checked = [...all].filter(c => c.checked);
+  document.getElementById('trd-asset-all').checked = checked.length === all.length;
+  document.getElementById('trd-asset-label').textContent =
+    checked.length === all.length ? `Alle (${all.length})` :
+    checked.length === 0 ? 'Keine' :
+    checked.map(c => c.value).join(', ');
+}
+
+async function loadTrdSettings() {
+  try {
+    const s = await apiFetch('/api/bot/settings');
+    if (s.min_confidence != null) document.getElementById('trd-conf').value = s.min_confidence;
+    if (s.sl_pct != null) document.getElementById('trd-sl-pct').value = s.sl_pct;
+    if (s.tp_pct != null) document.getElementById('trd-tp-pct').value = s.tp_pct;
+    if (s.risk_pct != null) document.getElementById('trd-risk').value = s.risk_pct;
+    if (s.leverage != null) document.getElementById('trd-leverage').value = s.leverage;
+    if (s.assets && Array.isArray(s.assets)) {
+      const cbs = document.querySelectorAll('.trd-asset-cb');
+      cbs.forEach(cb => { cb.checked = s.assets.includes(cb.value); });
+      document.getElementById('trd-asset-all').checked = s.assets.length >= 4;
+      updateTrdAssetLabel();
+    }
+  } catch(e) { console.warn('loadTrdSettings:', e); }
+}
+
+async function saveTrdSettings() {
+  const assets = [...document.querySelectorAll('.trd-asset-cb')]
+    .filter(c => c.checked).map(c => c.value);
+  const body = {
+    min_confidence: parseInt(document.getElementById('trd-conf').value) || 8,
+    assets,
+    sl_pct: parseFloat(document.getElementById('trd-sl-pct').value) || 999,
+    tp_pct: parseFloat(document.getElementById('trd-tp-pct').value) || 999,
+    risk_pct: parseFloat(document.getElementById('trd-risk').value) || 1.0,
+    leverage: parseInt(document.getElementById('trd-leverage').value) || 20,
+  };
+  try {
+    await apiFetch('/api/bot/settings', {
+      method: 'POST', body: JSON.stringify(body)
+    });
+    const el = document.getElementById('trd-settings-saved');
+    el.style.display = 'inline';
+    setTimeout(() => { el.style.display = 'none'; }, 2000);
   } catch(e) { alert('Fehler: ' + e.message); }
 }
 
@@ -1587,6 +1781,8 @@ document.addEventListener('click', e => {
   if (w && !w.contains(e.target)) document.getElementById('sim-asset-menu')?.classList.remove('open');
   const fw = document.getElementById('fetch-asset-wrap');
   if (fw && !fw.contains(e.target)) document.getElementById('fetch-asset-menu')?.classList.remove('open');
+  const tw = document.getElementById('trd-asset-wrap');
+  if (tw && !tw.contains(e.target)) document.getElementById('trd-asset-menu')?.classList.remove('open');
 });
 
 /* ─── MULTI-SELECT: ASSETS (FETCH) ──────────────────────── */

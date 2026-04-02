@@ -1292,17 +1292,49 @@ def create_api() -> FastAPI:
 
     # ── Bot-Steuerung ──────────────────────────────────────────────────────
     _bot_state: dict = {"running": False}
+    _bot_settings: dict = {
+        "min_confidence": 8,
+        "assets": ["GOLD", "SILVER", "OIL_CRUDE", "NATURALGAS"],
+        "risk_pct": 1.0,
+        "leverage": 20,
+        "sl_pct": 999,
+        "tp_pct": 999,
+    }
 
     @app.get("/api/bot/status")
     async def get_bot_status():
-        return {"running": _bot_state["running"]}
+        return {"running": _bot_state["running"], "settings": _bot_settings}
+
+    @app.get("/api/bot/settings")
+    async def get_bot_settings():
+        return _bot_settings
+
+    @app.post("/api/bot/settings")
+    async def update_bot_settings(body: dict):
+        """Bot-Einstellungen aktualisieren."""
+        allowed = {"min_confidence", "assets", "risk_pct", "leverage", "sl_pct", "tp_pct"}
+        for k, v in body.items():
+            if k in allowed:
+                _bot_settings[k] = v
+        # Sync min_confidence to config for live bot
+        if "min_confidence" in body:
+            config.MIN_CONFIDENCE_SCORE = int(body["min_confidence"])
+        return _bot_settings
 
     @app.post("/api/bot/start")
     async def start_bot():
         _bot_state["running"] = True
         config.TRADING_ENABLED = True
-        logger.info("Bot gestartet (via Dashboard)")
-        return {"status": "started", "running": True}
+        # Apply current settings to config
+        config.MIN_CONFIDENCE_SCORE = int(_bot_settings.get("min_confidence", 8))
+        logger.info(
+            "Bot gestartet (via Dashboard) – Konfidenz: %s, Assets: %s, SL: %s%%, TP: %s%%",
+            _bot_settings.get("min_confidence"),
+            _bot_settings.get("assets"),
+            _bot_settings.get("sl_pct"),
+            _bot_settings.get("tp_pct"),
+        )
+        return {"status": "started", "running": True, "settings": _bot_settings}
 
     @app.post("/api/bot/stop")
     async def stop_bot():
