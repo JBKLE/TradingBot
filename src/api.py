@@ -956,7 +956,10 @@ def create_api() -> FastAPI:
                     ).fetchall()
                     if len(rows) > max_points:
                         step = max(1, len(rows) // max_points)
+                        last = rows[-1]
                         rows = rows[::step]
+                        if rows[-1] != last:
+                            rows.append(last)
                     result[asset] = {
                         "timestamps": [r[0] for r in rows],
                         "prices":     [float(r[1]) for r in rows],
