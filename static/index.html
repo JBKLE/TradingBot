@@ -571,7 +571,7 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
           </div>
           <div class="f-field">
             <label>Min. Konfidenz (1–10)</label>
-            <input type="number" id="sim-conf" value="8" min="1" max="10">
+            <input type="number" id="sim-conf" value="1" min="0" max="10">
           </div>
           <div class="f-field">
             <label for="sim-start">Start-Datum (leer = alle)</label>
@@ -610,11 +610,11 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
         <div class="form-grid mb14">
           <div class="f-field">
             <label>Stop-Loss (%)</label>
-            <input type="number" id="sim-sl-pct" value="0.3" min="0.05" max="5" step="0.05">
+            <input type="number" id="sim-sl-pct" value="999" min="0.05" max="999" step="0.05">
           </div>
           <div class="f-field">
             <label>Take-Profit (%)</label>
-            <input type="number" id="sim-tp-pct" value="0.5" min="0.05" max="10" step="0.05">
+            <input type="number" id="sim-tp-pct" value="999" min="0.05" max="999" step="0.05">
           </div>
         </div>
 
@@ -1878,6 +1878,8 @@ async function loadDatenPage() {
   const monthAgo = new Date(Date.now() - 30*864e5).toISOString().slice(0,10);
   document.getElementById('fetch-start').value = monthAgo;
   document.getElementById('fetch-end').value = today;
+  document.getElementById('sim-start').value = monthAgo;
+  document.getElementById('sim-end').value   = today;
   await loadModels();
   await loadAllSimDBs();
   loadHistoryStatus();
@@ -2025,7 +2027,7 @@ let _simLiveTrades   = {}; // id → trade object, for modal lookup
 
 async function startSim() {
   const assets = getSelectedSimAssets();
-  const conf   = parseInt(document.getElementById('sim-conf').value) || 8;
+  const conf   = parseInt(document.getElementById('sim-conf').value) ?? 1;
   const start  = document.getElementById('sim-start').value || null;
   const end    = document.getElementById('sim-end').value   || null;
 

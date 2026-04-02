@@ -261,6 +261,12 @@ class TimelineSimulator:
                     close_confidence REAL
                 )
             """)
+            # Migrate: add columns if missing (table may pre-date these columns)
+            for col, ctype in [("confidence", "REAL"), ("close_confidence", "REAL")]:
+                try:
+                    await db.execute(f"ALTER TABLE sim_trades ADD COLUMN {col} {ctype}")
+                except Exception:
+                    pass  # column already exists
             await db.execute("DELETE FROM sim_trades WHERE sl_variant = 'dqn_timeline'")
             await db.commit()
 
