@@ -8,6 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<script src="charts.js"></script>
 <style>
 /* ─── RESET ──────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -492,48 +493,75 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
     <!-- ═══ PAGE: TRADING ════════════════════════════════════ -->
     <div class="page" id="page-trading">
 
-      <!-- Bot Control + KPIs -->
+      <!-- Modellauswahl -->
+      <div class="card mb14">
+        <div class="card-hd"><span class="card-title">DQN Modell</span></div>
+        <div class="form-grid" style="grid-template-columns:1fr auto;">
+          <div class="f-field">
+            <select id="trd-model" class="sel" onchange="onTrdModelSelected()">
+              <option value="">Lade Modelle...</option>
+            </select>
+            <span id="trd-model-info" style="font-size:11px;color:#007a1f;margin-top:2px;display:block;"></span>
+          </div>
+          <button class="btn btn-primary btn-sm" style="align-self:start;margin-top:2px;" onclick="activateTrdModel()">Aktivieren</button>
+        </div>
+      </div>
+
+      <!-- Bot Toggle + KPIs -->
       <div class="g4 mb14">
         <div class="card" id="trd-bot-card">
-          <div class="card-hd"><span class="card-title">Bot Status</span><span class="badge" id="trd-bot-badge">—</span></div>
-          <div id="trd-bot-status-box" style="margin-bottom:10px;text-align:center;"></div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-danger" style="flex:1;" id="trd-stop-btn" onclick="toggleBot()">Stopp</button>
+          <div class="card-hd"><span class="card-title">Bot Status</span><span class="badge badge-r" id="trd-bot-badge">GESTOPPT</span></div>
+          <div style="display:flex;gap:8px;margin-top:10px;">
+            <button class="btn btn-primary" style="flex:1;" id="trd-toggle-btn" onclick="toggleBot()">Bot starten</button>
             <button class="btn btn-ghost" style="flex:1;" onclick="triggerAnalyze('trd')">Analyse</button>
           </div>
         </div>
         <div class="card"><div class="card-hd"><span class="card-title">Tages-P/L</span></div><div class="kpi-val" id="trd-pl">—</div><div class="kpi-delta" id="trd-pl-d"></div></div>
         <div class="card"><div class="card-hd"><span class="card-title">Trades heute</span></div><div class="kpi-val blue" id="trd-today">—</div></div>
-        <div class="card">
-          <div class="card-hd"><span class="card-title">API Calls / h</span></div>
-          <div class="kpi-val yellow" id="trd-api">—</div>
-          <div class="prog-bar" style="margin-top:8px;"><div class="prog-fill g" id="trd-api-bar" style="width:0%"></div></div>
+        <div class="card"><div class="card-hd"><span class="card-title">Win Rate</span></div><div class="kpi-val" id="trd-winrate">—</div></div>
+      </div>
+
+      <!-- Signale -->
+      <div class="card mb14">
+        <div class="card-hd"><span class="card-title">Signale</span><span class="badge badge-d" id="trd-sig-ts">—</span></div>
+        <div id="trd-signals"><div class="empty">Klicke "Analyse" oben.</div></div>
+      </div>
+
+      <!-- Equity Kurve -->
+      <div class="card mb14" id="trd-equity-card" style="display:none;">
+        <div class="card-hd">
+          <span class="card-title">P/L Verlauf</span>
+          <span class="badge badge-b" id="trd-equity-badge">—</span>
         </div>
+        <div class="chart-wrap h160"><canvas id="trdEquityChart"></canvas></div>
+      </div>
+
+      <!-- Asset Kurve -->
+      <div class="card mb14" id="trd-asset-card" style="display:none;">
+        <div class="card-hd">
+          <span class="card-title">Asset Kurve</span>
+          <span class="badge badge-b" id="trd-asset-badge">—</span>
+          <span style="font-size:10px;color:var(--text-dim);margin-left:auto;margin-right:8px;">Scrollen = Zoom · Drag = Pan</span>
+          <button class="btn btn-ghost btn-sm" id="trd-chart-reset-zoom" style="display:none" onclick="trdCharts.resetZoom();trdTradeSelect(null);">↺ Reset</button>
+        </div>
+        <div class="chart-wrap h300"><canvas id="trdAssetChart"></canvas></div>
       </div>
 
       <!-- Offene Positionen -->
       <div class="card mb14">
-        <div class="card-hd"><span class="card-title">Offene Positionen</span><span class="badge badge-g" id="trd-open-badge">0 Aktiv</span></div>
+        <div class="card-hd"><span class="card-title">Offene Positionen</span><span class="badge badge-g" id="trd-open-badge">0</span></div>
         <div id="trd-open-body"><div class="empty">Keine offenen Positionen.</div></div>
       </div>
 
-      <!-- Signale + P/L Chart -->
-      <div class="g2 mb14">
-        <div class="card">
-          <div class="card-hd"><span class="card-title">Signale</span><span class="badge badge-d" id="trd-sig-ts">—</span></div>
-          <div id="trd-signals"><div class="empty">Klicke "Analyse" oben.</div></div>
+      <!-- Geschlossene Trades -->
+      <div class="card mb14" id="trd-closed-card">
+        <div class="card-hd">
+          <span class="card-title">Geschlossene Trades</span>
+          <span class="badge badge-d" id="trd-closed-badge">—</span>
         </div>
-        <div class="card">
-          <div class="card-hd"><span class="card-title">P/L Verlauf (7 Tage)</span></div>
-          <div class="chart-wrap h220"><canvas id="plChart"></canvas></div>
-        </div>
+        <div id="trd-closed-body"></div>
       </div>
 
-      <!-- Letzte Trades -->
-      <div class="card">
-        <div class="card-hd"><span class="card-title">Letzte Trades</span><span class="badge badge-d" id="trd-closed-badge">—</span></div>
-        <div id="trd-closed-body"><div class="loading-row"><div class="spinner"></div>Lade Trades...</div></div>
-      </div>
     </div><!-- /page-trading -->
 
     <!-- ═══ PAGE: SIMULATION & DATEN ═══════════════════════ -->
@@ -713,7 +741,7 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
           <span class="card-title">Asset Kurve</span>
           <span class="badge badge-b" id="sim-chart-badge">—</span>
           <span style="font-size:10px;color:var(--text-dim);margin-left:auto;margin-right:8px;">Scrollen = Zoom · Drag = Pan</span>
-          <button class="btn btn-ghost btn-sm" id="sim-chart-reset-zoom" style="display:none" onclick="if(simChart){_removeDetailCandles();simChart.resetZoom();if(simCapitalChart)simCapitalChart.resetZoom();this.style.display='none';simTradeSelect(null);}">↺ Reset</button>
+          <button class="btn btn-ghost btn-sm" id="sim-chart-reset-zoom" style="display:none" onclick="if(simChartCtx){simChartCtx.resetZoom();simTradeSelect(null);}">↺ Reset</button>
         </div>
         <div class="chart-wrap h300"><canvas id="simChart"></canvas></div>
       </div>
@@ -857,6 +885,8 @@ function nav(el) {
   document.getElementById('page-' + page).classList.add('active');
   document.getElementById('topbarTitle').textContent = PAGE_TITLES[page];
   currentPage = page;
+  // Clear trading polling when leaving page
+  if (page !== 'trading' && _trdPollInterval) { clearInterval(_trdPollInterval); _trdPollInterval = null; }
   if (page === 'trading') loadTradingPage();
   if (page === 'daten')  { loadDatenPage(); loadSimHistory(); }
   if (page === 'settings') loadSettings();
@@ -902,30 +932,40 @@ function setBotRunning(running) {
 }
 
 async function toggleBot() {
-  const endpoint = botRunning ? '/api/bot/stop' : '/api/bot/start';
-  try {
-    await apiFetch(endpoint, { method: 'POST' });
-    await refreshBotStatus();
-  } catch (e) { alert('Fehler: ' + e.message); }
+  if (botRunning) {
+    // Stop bot – check for open positions
+    try {
+      const d = await apiFetch('/api/bot/stop', { method: 'POST' });
+      const openPos = d.open_positions || [];
+      if (openPos.length > 0) {
+        const names = openPos.map(p => `${p.asset} ${p.direction}`).join(', ');
+        if (confirm(`Bot gestoppt. ${openPos.length} offene Position(en): ${names}\n\nAlle schliessen?`)) {
+          try {
+            await apiFetch('/api/positions/close-all', { method: 'POST' });
+          } catch (ce) { alert('Fehler beim Schliessen: ' + ce.message); }
+        }
+      }
+      await refreshBotStatus();
+      loadTradingTrades();
+    } catch (e) { alert('Fehler: ' + e.message); }
+  } else {
+    try {
+      await apiFetch('/api/bot/start', { method: 'POST' });
+      await refreshBotStatus();
+    } catch (e) { alert('Fehler: ' + e.message); }
+  }
 }
 
 function updateTradingBotCard(running) {
   const badge = document.getElementById('trd-bot-badge');
-  const box = document.getElementById('trd-bot-status-box');
-  const stopBtn = document.getElementById('trd-stop-btn');
+  const btn   = document.getElementById('trd-toggle-btn');
   if (!badge) return;
   if (running) {
     badge.className = 'badge badge-g'; badge.textContent = 'AKTIV';
-    box.innerHTML = '<div class="bot-status-card on"><div class="bot-status-text" style="color:var(--green)">&#9673; BOT AKTIV</div></div>';
-    stopBtn.textContent = 'Stopp';
-    stopBtn.className = 'btn btn-danger';
-    stopBtn.onclick = toggleBot;
+    btn.textContent = 'Bot stoppen'; btn.className = 'btn btn-danger';
   } else {
     badge.className = 'badge badge-r'; badge.textContent = 'GESTOPPT';
-    box.innerHTML = '<div class="bot-status-card off"><div class="bot-status-text" style="color:var(--red)">&#9675; BOT GESTOPPT</div></div>';
-    stopBtn.textContent = 'Starten';
-    stopBtn.className = 'btn btn-primary';
-    stopBtn.onclick = toggleBot;
+    btn.textContent = 'Bot starten'; btn.className = 'btn btn-primary';
   }
 }
 
@@ -948,7 +988,7 @@ const CHART_DEFAULTS = {
   }
 };
 
-let balanceChart, plChart, simChart, simCapitalChart;
+let balanceChart, simChart, simCapitalChart;
 
 function getOrCreate(id) {
   const existing = Chart.getChart(id);
@@ -969,566 +1009,92 @@ function renderBalanceChart(labels, values) {
   });
 }
 
-function renderPLChart(labels, values) {
-  const ctx = getOrCreate('plChart');
-  plChart = new Chart(ctx, {
-    type: 'bar',
-    data: { labels, datasets: [{ data: values,
-      backgroundColor: values.map(v => v >= 0 ? 'rgba(0,255,65,0.5)' : 'rgba(255,59,59,0.5)'),
-      borderColor: values.map(v => v >= 0 ? '#00ff41' : '#ff3b3b'),
-      borderWidth: 1, borderRadius: 3 }] },
-    options: { ...CHART_DEFAULTS, scales: { ...CHART_DEFAULTS.scales,
-      y: { ...CHART_DEFAULTS.scales.y, ticks: { ...CHART_DEFAULTS.scales.y.ticks,
-        callback: v => (v>=0?'+':'') + '€' + v }}}}
-  });
-}
+/* renderPLChart removed — replaced by shared ChartModule equity chart */
 
-let _simHoverTradeIdx    = null; // 0-based index into _simTradesFull, null = none
-let _simSelectedTradeIdx = null; // clicked/inspected trade, null = none
-let _simLastInputDb      = null; // input DB from last sim start (for asset curves)
-let _simLastAssets       = [];   // assets from last sim start
-const ASSET_COLORS = {
-  GOLD:       '#f5c542',
-  SILVER:     '#b0c4de',
-  OIL_CRUDE:  '#e67e22',
-  NATURALGAS: '#9b59b6',
-};
+let _simHoverTradeIdx    = null;
+let _simSelectedTradeIdx = null;
+let _simLastInputDb      = null;
+let _simLastAssets       = [];
+let simChartCtx          = null; // ChartModule context for simulation
 
-// Zoom-dependent point radius: more zoom → bigger points
-function _zoomRadius(chart, scaleId, data, minR, maxR) {
-  if (!data.length) return minR;
-  const scale = chart.scales[scaleId];
-  if (!scale) return minR;
-  const dataMin = data[0].x, dataMax = data[data.length - 1].x;
-  const totalRange = dataMax - dataMin;
-  if (totalRange <= 0) return maxR;
-  const zf = totalRange / (scale.max - scale.min); // >1 = zoomed in
-  if (zf >= 20) return maxR;
-  if (zf >= 5)  return minR + (maxR - minR) * 0.7;
-  if (zf >= 2)  return minR + (maxR - minR) * 0.3;
-  return minR;
-}
+/* Sim chart helpers — delegate to ChartModule */
 
 function simChartHighlight(tradeIdx, rowEl) {
   _simHoverTradeIdx = (tradeIdx == null) ? null : Number(tradeIdx);
-  if (simChart) simChart.update('none');
-  if (simCapitalChart) simCapitalChart.update('none');
-  document.querySelectorAll('.tbl tr.chart-hover').forEach(r => r.classList.remove('chart-hover'));
+  if (simChartCtx) simChartCtx.update();
+  document.querySelectorAll('#sim-trades-card .tbl tr.chart-hover').forEach(r => r.classList.remove('chart-hover'));
   if (rowEl) rowEl.classList.add('chart-hover');
 }
 
 function simChartHighlightFromChart(tradeIdx) {
   if (tradeIdx === _simHoverTradeIdx) return;
   _simHoverTradeIdx = tradeIdx;
-  if (simChart) simChart.update('none');
-  if (simCapitalChart) simCapitalChart.update('none');
-  document.querySelectorAll('.tbl tr.chart-hover').forEach(r => r.classList.remove('chart-hover'));
+  if (simChartCtx) simChartCtx.update();
+  document.querySelectorAll('#sim-trades-card .tbl tr.chart-hover').forEach(r => r.classList.remove('chart-hover'));
   if (tradeIdx == null) return;
-  let row = document.querySelector(`.tbl tr[data-trade-idx="${tradeIdx}"]`);
-  // Load more pages if trade not yet rendered
+  let row = document.querySelector(`#sim-trades-card .tbl tr[data-trade-idx="${tradeIdx}"]`);
   if (!row && tradeIdx < _simTradesFull.length) {
-    while (_simTradesShown <= tradeIdx && _simTradesShown < _simTradesFull.length) {
-      renderTradeTable(false);
-    }
-    row = document.querySelector(`.tbl tr[data-trade-idx="${tradeIdx}"]`);
+    while (_simTradesShown <= tradeIdx && _simTradesShown < _simTradesFull.length) renderTradeTable(false);
+    row = document.querySelector(`#sim-trades-card .tbl tr[data-trade-idx="${tradeIdx}"]`);
   }
-  if (row) {
-    row.classList.add('chart-hover');
-    row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }
+  if (row) { row.classList.add('chart-hover'); row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
 }
 
-/* ─── TRADE INSPECTOR (click-to-inspect) ─────────────────── */
+/* ─── SIM TRADE INSPECTOR ─────────────────────────────────── */
 function simTradeSelect(tradeIdx) {
-  // Toggle: click same trade again → deselect & reset zoom
   if (_simSelectedTradeIdx === tradeIdx) {
-    tradeIdx = null;
     _simSelectedTradeIdx = null;
-    document.querySelectorAll('.tbl tr.chart-selected').forEach(r => r.classList.remove('chart-selected'));
-    _removeDetailCandles();
-    if (simChart) simChart.resetZoom();
-    if (simCapitalChart) simCapitalChart.resetZoom();
-    _updateInspectorLines();
+    document.querySelectorAll('#sim-trades-card .tbl tr.chart-selected').forEach(r => r.classList.remove('chart-selected'));
+    if (simChartCtx) { simChartCtx.removeDetailCandles(); simChartCtx.resetZoom(); simChartCtx.updateInspectorLines(); }
     return;
   }
   _simSelectedTradeIdx = tradeIdx;
-  // Highlight row
-  document.querySelectorAll('.tbl tr.chart-selected').forEach(r => r.classList.remove('chart-selected'));
+  document.querySelectorAll('#sim-trades-card .tbl tr.chart-selected').forEach(r => r.classList.remove('chart-selected'));
   if (tradeIdx != null) {
-    let row = document.querySelector(`.tbl tr[data-trade-idx="${tradeIdx}"]`);
+    let row = document.querySelector(`#sim-trades-card .tbl tr[data-trade-idx="${tradeIdx}"]`);
     if (!row && tradeIdx < _simTradesFull.length) {
       while (_simTradesShown <= tradeIdx && _simTradesShown < _simTradesFull.length) renderTradeTable(false);
-      row = document.querySelector(`.tbl tr[data-trade-idx="${tradeIdx}"]`);
+      row = document.querySelector(`#sim-trades-card .tbl tr[data-trade-idx="${tradeIdx}"]`);
     }
     if (row) { row.classList.add('chart-selected'); row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
-
-    // Zoom chart to trade time range with padding
-    const t = _simTradesFull[tradeIdx];
-    if (t && simChart) {
-      const entryMs = new Date(t.entry_ts).getTime();
-      const exitMs  = new Date(t.exit_ts || t.entry_ts).getTime();
-      const span    = Math.max(exitMs - entryMs, 60000); // min 1 minute
-      const pad     = span * 2; // 2x padding on each side
-      simChart.zoomScale('x', { min: entryMs - pad, max: exitMs + pad });
-      const btn = document.getElementById('sim-chart-reset-zoom');
-      if (btn) btn.style.display = '';
-      _syncChartsOnZoom();
-    }
-  }
-  _updateInspectorLines();
-}
-
-let _detailDebounce = null;
-let _syncLock = false; // prevent infinite sync loops
-
-function _syncFromCapitalChart() {
-  if (_syncLock || !simCapitalChart || !simChart) return;
-  _syncLock = true;
-  const xMin = simCapitalChart.scales.x?.min;
-  const xMax = simCapitalChart.scales.x?.max;
-  if (xMin != null && xMax != null) {
-    simChart.zoomScale('x', { min: xMin, max: xMax });
-    const btn = document.getElementById('sim-chart-reset-zoom');
-    if (btn) btn.style.display = '';
-  }
-  _updateInspectorLines();
-  if (_detailDebounce) clearTimeout(_detailDebounce);
-  _detailDebounce = setTimeout(() => _loadDetailRange(xMin, xMax), 250);
-  _syncLock = false;
-}
-
-function _syncChartsOnZoom() {
-  if (_syncLock || !simChart) return;
-  _syncLock = true;
-  const xMin = simChart.scales.x?.min;
-  const xMax = simChart.scales.x?.max;
-
-  // Sync capital chart x-axis
-  if (simCapitalChart && xMin != null && xMax != null) {
-    simCapitalChart.zoomScale('x', { min: xMin, max: xMax });
-  }
-  _syncLock = false;
-
-  _updateInspectorLines();
-
-  // Debounced detail candle loading
-  if (_detailDebounce) clearTimeout(_detailDebounce);
-  _detailDebounce = setTimeout(() => _loadDetailRange(xMin, xMax), 250);
-}
-
-async function _loadDetailRange(fromMs, toMs) {
-  if (!_simLastInputDb || !simChart || fromMs == null || toMs == null) return;
-
-  // Determine zoom factor — only load detail when zoomed in enough
-  const allData = simChart.data.datasets.find(ds => ds._origData || (ds.yAxisID === 'yR' && ds.label !== '_hidden'));
-  if (!allData) return;
-  const origData = allData._origData || allData.data;
-  if (!origData.length) return;
-  const totalRange = origData[origData.length - 1].x - origData[0].x;
-  const visibleRange = toMs - fromMs;
-  if (totalRange <= 0) return;
-  const zf = totalRange / visibleRange;
-  if (zf < 1.5) { _removeDetailCandles(); simChart.update('none'); return; }
-
-  // Collect all asset names from chart datasets
-  const assets = simChart.data.datasets
-    .filter(ds => ds.yAxisID === 'yR' && ds.label !== '_hidden' && !ds._inspectId)
-    .map(ds => ds.label);
-  if (!assets.length) return;
-
-  const startIso = new Date(fromMs).toISOString();
-  const endIso   = new Date(toMs).toISOString();
-  try {
-    const d = await apiFetch(
-      `/api/sim/candles?db=${encodeURIComponent(_simLastInputDb)}`
-      + `&assets=${encodeURIComponent(assets.join(','))}`
-      + `&start=${encodeURIComponent(startIso)}`
-      + `&end=${encodeURIComponent(endIso)}`
-      + `&max_points=5000`
-    );
-    for (const asset of assets) {
-      const series = d[asset];
-      if (!series || !series.timestamps.length) continue;
-      const ds = simChart.data.datasets.find(dd => dd.label === asset && dd.yAxisID === 'yR');
-      if (!ds) continue;
-      if (!ds._origData) ds._origData = ds.data;
-      const detailData = series.timestamps.map((ts, i) => ({ x: new Date(ts).getTime(), y: series.prices[i] }));
-      const outside = ds._origData.filter(p => p.x < fromMs || p.x > toMs);
-      // Inject trade entry prices so scatter dots sit on the line
-      const detailSet = new Set(detailData.map(p => p.x));
-      for (const t of _simTradesFull) {
-        if (t.asset !== asset) continue;
-        const eMs = new Date(t.entry_ts).getTime();
-        if (!detailSet.has(eMs) && eMs >= fromMs && eMs <= toMs) detailData.push({ x: eMs, y: t.entry_price });
-      }
-      ds.data = [...outside, ...detailData].sort((a, b) => a.x - b.x);
-    }
-    simChart.update('none');
-  } catch (e) { console.warn('Detail candles failed:', e); }
-}
-
-function _removeDetailCandles() {
-  if (!simChart) return;
-  simChart.data.datasets.forEach(ds => {
-    if (ds._origData) { ds.data = ds._origData; delete ds._origData; }
-  });
-}
-
-function _updateInspectorLines() {
-  if (!simChart) return;
-  const t = _simSelectedTradeIdx != null ? _simTradesFull[_simSelectedTradeIdx] : null;
-
-  // Find or create the 4 inspector datasets by _inspectId
-  const ids = ['_inspEntry', '_inspExit', '_inspTP', '_inspSL'];
-  ids.forEach(id => {
-    let ds = simChart.data.datasets.find(d => d._inspectId === id);
-    if (!ds) {
-      ds = { _inspectId: id, label: '_hidden', yAxisID: 'yR', type: 'line',
-             data: [], pointRadius: 0, pointHoverRadius: 0, fill: false,
-             borderWidth: 1.5, order: 5 };
-      simChart.data.datasets.push(ds);
-    }
-    ds.data = [];
-  });
-
-  if (t) {
-    const yMin = simChart.scales.yR.min;
-    const yMax = simChart.scales.yR.max;
-    const entryMs = new Date(t.entry_ts).getTime();
-    const exitMs  = new Date(t.exit_ts || t.entry_ts).getTime();
-
-    const dsEntry = simChart.data.datasets.find(d => d._inspectId === '_inspEntry');
-    const dsExit  = simChart.data.datasets.find(d => d._inspectId === '_inspExit');
-    const dsTP    = simChart.data.datasets.find(d => d._inspectId === '_inspTP');
-    const dsSL    = simChart.data.datasets.find(d => d._inspectId === '_inspSL');
-
-    // Vertical: entry time (white) – full chart height
-    dsEntry.data = [{ x: entryMs, y: yMin }, { x: entryMs, y: yMax }];
-    dsEntry.borderColor = 'rgba(255,255,255,0.5)';
-    dsEntry.borderDash = [];
-    dsEntry.borderWidth = 1.5;
-
-    // Vertical: exit time (yellow) – full chart height
-    dsExit.data = [{ x: exitMs, y: yMin }, { x: exitMs, y: yMax }];
-    dsExit.borderColor = 'rgba(245,197,66,0.5)';
-    dsExit.borderDash = [];
-    dsExit.borderWidth = 1.5;
-
-    // Horizontal: TP level (green) – only if within reasonable range (< 10% from entry)
-    if (t.tp_price && Math.abs(t.tp_price - t.entry_price) / t.entry_price < 0.10) {
-      dsTP.data = [{ x: entryMs, y: t.tp_price }, { x: exitMs, y: t.tp_price }];
-      dsTP.borderColor = 'rgba(0,255,65,0.8)';
-      dsTP.borderDash = [];
-      dsTP.borderWidth = 1.5;
-    }
-
-    // Horizontal: SL level (red) – only if within reasonable range (< 10% from entry)
-    if (t.sl_price && Math.abs(t.sl_price - t.entry_price) / t.entry_price < 0.10) {
-      dsSL.data = [{ x: entryMs, y: t.sl_price }, { x: exitMs, y: t.sl_price }];
-      dsSL.borderColor = 'rgba(255,59,59,0.8)';
-      dsSL.borderDash = [];
-      dsSL.borderWidth = 1.5;
-    }
-  }
-
-  simChart.update('none');
-
-  // Update capital chart inspector lines
-  if (simCapitalChart) {
-    const dsCapEntry = simCapitalChart.data.datasets.find(d => d._capInspect === 'entry');
-    const dsCapExit  = simCapitalChart.data.datasets.find(d => d._capInspect === 'exit');
-    if (dsCapEntry) dsCapEntry.data = [];
-    if (dsCapExit)  dsCapExit.data = [];
-    if (t) {
-      const capYMin = simCapitalChart.scales.y.min;
-      const capYMax = simCapitalChart.scales.y.max;
-      const entryMs = new Date(t.entry_ts).getTime();
-      const exitMs  = new Date(t.exit_ts || t.entry_ts).getTime();
-      if (dsCapEntry) dsCapEntry.data = [{ x: entryMs, y: capYMin }, { x: entryMs, y: capYMax }];
-      if (dsCapExit)  dsCapExit.data  = [{ x: exitMs,  y: capYMin }, { x: exitMs,  y: capYMax }];
-    }
-    simCapitalChart.update('none');
+    if (simChartCtx) simChartCtx.zoomToTrade(tradeIdx);
+  } else {
+    if (simChartCtx) simChartCtx.updateInspectorLines();
   }
 }
 
 function renderSimChart() {
   _simHoverTradeIdx = null;
   _simSelectedTradeIdx = null;
-  const resetBtn = document.getElementById('sim-chart-reset-zoom');
-  if (resetBtn) resetBtn.style.display = 'none';
-
-  const ctx = getOrCreate('simChart');
-
-  const tsFmt = v => {
-    const d = new Date(v);
-    return d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})
-      + ' ' + d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
-  };
-
-  simChart = new Chart(ctx, {
-    type: 'line',
-    data: { datasets: [] },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      onHover: (event, elements) => {
-        if (!elements.length) { simChartHighlightFromChart(null); return; }
-        for (const el of elements) {
-          const pt = simChart.data.datasets[el.datasetIndex].data[el.index];
-          if (pt && pt.tradeIdx != null) { simChartHighlightFromChart(pt.tradeIdx); return; }
-        }
-      },
-      onClick: (event, elements) => {
-        let clickedIdx = null;
-        for (const el of elements) {
-          const pt = simChart.data.datasets[el.datasetIndex].data[el.index];
-          if (pt && pt.tradeIdx != null) { clickedIdx = pt.tradeIdx; break; }
-        }
-        simTradeSelect(clickedIdx);
-      },
-      plugins: {
-        zoom: {
-          zoom: {
-            wheel: { enabled: true, speed: 0.08 },
-            pinch: { enabled: true },
-            mode: 'x',
-            onZoomComplete: () => {
-              const btn = document.getElementById('sim-chart-reset-zoom');
-              if (btn) btn.style.display = '';
-              _syncChartsOnZoom();
-            }
-          },
-          pan: { enabled: true, mode: 'x', onPanComplete: () => _syncChartsOnZoom() },
-        },
-        legend: {
-          display: true,
-          labels: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' }, boxWidth: 8, padding: 10,
-            filter: item => item.text !== '_hidden' }
-        },
-        tooltip: {
-          backgroundColor: '#18232e', borderColor: 'rgba(0,255,65,0.3)', borderWidth: 1,
-          titleColor: '#c9d1d9', bodyColor: '#00ff41',
-          callbacks: {
-            title: items => tsFmt(items[0].parsed.x),
-            label: item => {
-              const raw = item.raw;
-              const v   = typeof raw === 'object' ? raw.y : raw;
-              const ds  = item.dataset.label;
-              // Trade scatter points
-              if (ds === '_hidden' && raw && raw.asset) {
-                const dir = raw.dir === 'BUY' ? '▲' : '▼';
-                return `${raw.asset} ${dir} ${Number(v).toFixed(2)} · Conf ${raw.conf}`;
-              }
-              if (ds === '_hidden') return null;
-              // Asset price line
-              return `${ds}: ${Number(v).toFixed(2)}`;
-            }
-          }
-        }
-      },
-      scales: {
-        x: {
-          type: 'linear',
-          grid: { color: 'rgba(255,255,255,0.04)' },
-          ticks: {
-            color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' },
-            maxTicksLimit: 8, maxRotation: 0,
-            callback: v => tsFmt(v)
-          }
-        },
-        yR: {
-          position: 'right',
-          grid: { color: 'rgba(255,255,255,0.04)' },
-          ticks: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' },
-            callback: v => Number(v).toFixed(2) }
-        }
-      }
-    }
+  if (simChartCtx) simChartCtx.destroy();
+  simChartCtx = ChartModule.create({
+    assetCanvasId:  'simChart',
+    equityCanvasId: 'simCapitalChart',
+    resetBtnId:     'sim-chart-reset-zoom',
+    onTradeSelect:  simTradeSelect,
+    onTradeHover:   simChartHighlightFromChart,
+    getSelectedIdx: () => _simSelectedTradeIdx,
+    getHoverIdx:    () => _simHoverTradeIdx,
+    getTradeList:   () => _simTradesFull,
   });
+  simChartCtx.renderAssetChart();
+  // Keep legacy references for backward compat
+  simChart = simChartCtx.assetChart;
 }
 
 function renderCapitalChart(equityPoints, isCapital) {
-  const ctx = getOrCreate('simCapitalChart');
-
-  const yFmt = v => isCapital
-    ? '€\u202f' + Number(v).toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2})
-    : Number(v).toFixed(4);
-
-  const tsFmt = v => {
-    const d = new Date(v);
-    return d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})
-      + ' ' + d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
-  };
-
-  simCapitalChart = new Chart(ctx, {
-    type: 'line',
-    data: {
-      datasets: [
-        {
-          label: isCapital ? 'Kapital' : 'Kum. PnL',
-          data: equityPoints,
-          borderColor: '#3b82f6', borderWidth: 2,
-          backgroundColor: 'rgba(59,130,246,0.07)', fill: true, tension: 0,
-          pointRadius:          ctx => {
-            const idx = ctx.raw?.tradeIdx;
-            if (idx == null) return 0;
-            if (idx === _simSelectedTradeIdx) return 7;
-            if (idx === _simHoverTradeIdx)    return 5;
-            return _zoomRadius(ctx.chart, 'x', ctx.dataset.data, 0, 4);
-          },
-          pointHoverRadius: 4,
-          pointBackgroundColor: ctx => {
-            const idx = ctx.raw?.tradeIdx;
-            if (idx != null && idx === _simSelectedTradeIdx) return '#f5c542';
-            if (idx != null && idx === _simHoverTradeIdx)    return '#fff';
-            return '#3b82f6';
-          },
-          pointBorderColor: ctx => (ctx.raw?.tradeIdx != null && (ctx.raw.tradeIdx === _simHoverTradeIdx || ctx.raw.tradeIdx === _simSelectedTradeIdx)) ? '#fff' : '#3b82f6',
-          pointBorderWidth: ctx => (ctx.raw?.tradeIdx != null && (ctx.raw.tradeIdx === _simHoverTradeIdx || ctx.raw.tradeIdx === _simSelectedTradeIdx)) ? 2 : 0,
-          order: 10,
-        },
-        // Inspector: entry vertical
-        { _capInspect: 'entry', label: '_hidden', data: [], borderColor: 'rgba(255,255,255,0.5)', borderWidth: 1.5, borderDash: [], pointRadius: 0, fill: false, order: 5 },
-        // Inspector: exit vertical
-        { _capInspect: 'exit', label: '_hidden', data: [], borderColor: 'rgba(245,197,66,0.5)', borderWidth: 1.5, borderDash: [], pointRadius: 0, fill: false, order: 5 },
-      ]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      onClick: (event, elements) => {
-        let clickedIdx = null;
-        for (const el of elements) {
-          const pt = simCapitalChart.data.datasets[el.datasetIndex].data[el.index];
-          if (pt && pt.tradeIdx != null) { clickedIdx = pt.tradeIdx; break; }
-        }
-        simTradeSelect(clickedIdx);
-      },
-      plugins: {
-        zoom: {
-          zoom: {
-            wheel: { enabled: true, speed: 0.08 }, pinch: { enabled: true }, mode: 'x',
-            onZoomComplete: () => _syncFromCapitalChart(),
-          },
-          pan: { enabled: true, mode: 'x', onPanComplete: () => _syncFromCapitalChart() },
-        },
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#18232e', borderColor: 'rgba(0,255,65,0.3)', borderWidth: 1,
-          titleColor: '#c9d1d9', bodyColor: '#00ff41',
-          callbacks: {
-            title: items => tsFmt(items[0].parsed.x),
-            label: item => {
-              if (item.dataset.label === '_hidden') return null;
-              return `${item.dataset.label}: ${yFmt(item.parsed.y)}`;
-            }
-          }
-        }
-      },
-      scales: {
-        x: {
-          type: 'linear', display: false,
-        },
-        y: {
-          grid: { color: 'rgba(255,255,255,0.04)' },
-          ticks: { color: '#6e7681', font: { size: 10, family: 'Share Tech Mono' }, callback: yFmt }
-        }
-      }
-    }
-  });
+  if (!simChartCtx) return;
+  simChartCtx.renderEquityChart(equityPoints, isCapital);
+  simCapitalChart = simChartCtx.equityChart;
 }
 
 async function loadAssetCurves(inputDb, assets, tl, startTs, endTs) {
-  if (!inputDb || !assets.length || !simChart) return;
-  const assetParam = assets.join(',');
-  let data;
-  try {
-    data = await apiFetch(
-      `/api/sim/candles?db=${encodeURIComponent(inputDb)}&assets=${encodeURIComponent(assetParam)}`
-      + (startTs ? `&start=${encodeURIComponent(startTs)}` : '')
-      + (endTs   ? `&end=${encodeURIComponent(endTs)}`     : '')
-    );
-  } catch (e) { console.warn('loadAssetCurves failed:', e); return; }
-
-  // Group trades by asset with their indices
-  const tradesByAsset = {};
-  tl.forEach((t, i) => {
-    if (!tradesByAsset[t.asset]) tradesByAsset[t.asset] = [];
-    tradesByAsset[t.asset].push({ ...t, tradeIdx: i });
-  });
-
-  const newDatasets = [];
-  for (const asset of assets) {
-    const series = data[asset];
-    if (!series || !series.timestamps.length) continue;
-    const color = ASSET_COLORS[asset] || '#888';
-
-    // Price line – inject trade entry prices (= real candle close) so dots sit on the line
-    const priceData = series.timestamps.map((ts, i) => ({ x: new Date(ts).getTime(), y: series.prices[i] }));
-    const assetTrades = tradesByAsset[asset] || [];
-    if (assetTrades.length) {
-      const existing = new Set(priceData.map(p => p.x));
-      for (const t of assetTrades) {
-        const xMs = new Date(t.entry_ts).getTime();
-        if (!existing.has(xMs)) priceData.push({ x: xMs, y: t.entry_price });
-      }
-      priceData.sort((a, b) => a.x - b.x);
-    }
-    newDatasets.push({
-      label: asset,
-      yAxisID: 'yR',
-      data: priceData,
-      borderColor: color, borderWidth: 1.5,
-      backgroundColor: 'transparent', fill: false, tension: 0,
-      pointRadius: 0, pointHoverRadius: 3,
-      order: 20,
-    });
-
-    // Trade scatter – single point per trade at entry time/price
-    if (assetTrades.length) {
-      const scatterData = assetTrades.map(t => {
-        const st = (t.status || '').toLowerCase();
-        return {
-          x:        new Date(t.entry_ts).getTime(),
-          y:        t.entry_price,
-          tradeIdx: t.tradeIdx,
-          asset:    t.asset,
-          dir:      t.direction,
-          conf:     t.confidence,
-          status:   t.status,
-          isTP:     st.includes('tp'),
-        };
-      });
-      newDatasets.push({
-        label: '_hidden', yAxisID: 'yR', type: 'scatter', data: scatterData,
-        pointRadius: ctx => {
-          const idx = ctx.raw.tradeIdx;
-          if (idx === _simSelectedTradeIdx) return 7;
-          if (idx === _simHoverTradeIdx)    return 5;
-          return _zoomRadius(ctx.chart, 'x', ctx.dataset.data, 1.5, 5);
-        },
-        pointHoverRadius: 5,
-        backgroundColor: ctx => {
-          const r = ctx.raw;
-          if (r.tradeIdx === _simSelectedTradeIdx) return '#f5c542';
-          if (r.tradeIdx === _simHoverTradeIdx)    return '#fff';
-          return r.isTP ? 'rgba(0,255,65,0.85)' : 'rgba(255,59,59,0.85)';
-        },
-        borderColor: ctx => {
-          const r = ctx.raw;
-          if (r.tradeIdx === _simSelectedTradeIdx) return '#fff';
-          return r.isTP ? 'rgba(0,255,65,0.5)' : 'rgba(255,59,59,0.5)';
-        },
-        borderWidth: ctx => ctx.raw.tradeIdx === _simSelectedTradeIdx ? 2 : 1,
-        order: 1,
-      });
-    }
-  }
-
-  if (!newDatasets.length) return;
-
-  // Show right Y axis
-  simChart.options.scales.yR.display = true;
-  newDatasets.forEach(ds => simChart.data.datasets.push(ds));
-  simChart.update('none');
+  if (!simChartCtx || !inputDb || !assets.length) return;
+  simChartCtx.setDetailDb(inputDb);
+  await simChartCtx.loadAssetCurves(
+    `/api/sim/candles?db=${encodeURIComponent(inputDb)}`,
+    assets, tl, startTs, endTs
+  );
 }
 
 /* ─── SIGNALS HTML ────────────────────────────────────────── */
@@ -1713,39 +1279,90 @@ async function triggerAnalyze(ctx) {
 }
 
 /* ─── TRADING PAGE ────────────────────────────────────────── */
+let trdCharts = null;
+let _trdHoverIdx    = null;
+let _trdSelectedIdx = null;
+let _trdTradesFull  = [];
+let _trdTradesShown = 0;
+const TRD_PAGE_SIZE = 50;
+let _trdPollInterval = null;
+
 async function loadTradingPage() {
   updateTradingBotCard(botRunning);
-  // KPIs from status
-  if (_lastStatus) {
-    const p = _lastStatus.performance || {};
-    setText('trd-pl', eur(p.pl_today));
-    const isPos = (p.pl_today || 0) >= 0;
-    setClass('trd-pl', 'kpi-val' + (isPos ? '' : ' red'));
-    setText('trd-pl-d', p.pl_today_pct ? pct(p.pl_today_pct) : '');
-    setClass('trd-pl-d', 'kpi-delta ' + (isPos ? 'pos' : 'neg'));
-    setText('trd-today', _lastStatus.trades_today ?? '—');
-  }
-  // Trades
-  loadTrades();
+  updateTrdKPIs();
+  await loadTrdModels();
+  loadTradingTrades();
+  // Start polling every 30s
+  if (_trdPollInterval) clearInterval(_trdPollInterval);
+  _trdPollInterval = setInterval(pollTradingStatus, 30000);
 }
 
-async function loadTrades() {
+function updateTrdKPIs() {
+  if (!_lastStatus) return;
+  const p = _lastStatus.performance || {};
+  setText('trd-pl', eur(p.pl_today));
+  const isPos = (p.pl_today || 0) >= 0;
+  setClass('trd-pl', 'kpi-val' + (isPos ? '' : ' red'));
+  setText('trd-pl-d', p.pl_today_pct ? pct(p.pl_today_pct) : '');
+  setClass('trd-pl-d', 'kpi-delta ' + (isPos ? 'pos' : 'neg'));
+  setText('trd-today', _lastStatus.trades_today ?? '—');
+  setText('trd-winrate', p.win_rate != null ? p.win_rate.toFixed(1) + '%' : '—');
+}
+
+async function loadTrdModels() {
   try {
-    const d = await apiFetch('/api/trades?limit=50');
+    const d = await apiFetch('/api/models');
+    const models = d.models || [];
+    const sel = document.getElementById('trd-model');
+    sel.innerHTML = models.length
+      ? models.map(m => {
+          const ver = m.parsed_version || '';
+          return `<option value="${m.filename}" data-version="${ver}" data-asset="${m.parsed_asset||''}">${m.filename}${ver?' ['+ver+']':''}</option>`;
+        }).join('')
+      : '<option value="">Keine Modelle</option>';
+    onTrdModelSelected();
+  } catch(e) { console.warn('loadTrdModels:', e); }
+}
+
+function onTrdModelSelected() {
+  const sel = document.getElementById('trd-model');
+  const opt = sel.selectedOptions[0];
+  const info = document.getElementById('trd-model-info');
+  if (!opt || !opt.dataset.version) { info.textContent = ''; return; }
+  const v = opt.dataset.version;
+  const cfg = (_versionsCache || {})[v];
+  info.textContent = cfg
+    ? `${v}: ${cfg.max_window} Candles · ${cfg.n_indicators} Indikatoren · ${cfg.action_size} Aktionen · State ${cfg.state_size}`
+    : v;
+}
+
+async function activateTrdModel() {
+  const sel = document.getElementById('trd-model');
+  if (!sel.value) return;
+  try {
+    await apiFetch('/api/models/select', {
+      method: 'POST',
+      body: JSON.stringify({ filename: sel.value })
+    });
+  } catch(e) { alert('Fehler: ' + e.message); }
+}
+
+async function loadTradingTrades() {
+  try {
+    const d = await apiFetch('/api/trades?limit=100');
     const trades = d.trades || [];
     const open   = trades.filter(t => t.status === 'OPEN');
-    const closed  = trades.filter(t => t.status !== 'OPEN');
+    const closed = trades.filter(t => t.status !== 'OPEN');
 
-    setText('trd-open-badge', open.length + ' Aktiv');
-
-    // Open positions
+    // ── Open positions ──
+    setText('trd-open-badge', open.length);
     if (open.length === 0) {
       document.getElementById('trd-open-body').innerHTML = '<div class="empty">Keine offenen Positionen.</div>';
     } else {
       document.getElementById('trd-open-body').innerHTML = `
         <table class="tbl"><thead><tr>
           <th>Zeit</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
-          <th>SL</th><th>TP</th><th>Konfidenz</th><th>P/L</th>
+          <th>SL</th><th>TP</th><th>Conf</th><th></th>
         </tr></thead><tbody>
         ${open.map(t => `<tr>
           <td>${ts2time(t.timestamp)}</td>
@@ -1754,53 +1371,194 @@ async function loadTrades() {
           <td>${t.entry_price?.toFixed(2)??'—'}</td>
           <td style="color:var(--red)">${t.stop_loss?.toFixed(2)??'—'}</td>
           <td style="color:var(--green)">${t.take_profit?.toFixed(2)??'—'}</td>
-          <td>${t.confidence??'—'}/10</td>
-          <td>—</td>
+          <td style="color:var(--yellow)">${t.confidence??'—'}/10</td>
+          <td><button class="btn btn-danger btn-sm" onclick="closeTrdPosition('${t.deal_id}','${t.asset}')">Schliessen</button></td>
         </tr>`).join('')}
         </tbody></table>`;
     }
 
-    // Closed trades + P/L chart
+    // ── Closed trades table ──
     setText('trd-closed-badge', closed.length + ' Trades');
-    if (closed.length === 0) {
-      document.getElementById('trd-closed-body').innerHTML = '<div class="empty">Keine abgeschlossenen Trades.</div>';
+    // Normalize to common format for chart module
+    _trdTradesFull = closed.map(t => ({
+      asset: t.asset, direction: t.direction,
+      entry_ts: t.timestamp, exit_ts: t.exit_timestamp || '',
+      entry_price: t.entry_price, exit_price: t.exit_price,
+      sl_price: t.stop_loss, tp_price: t.take_profit,
+      pnl: t.profit_loss, pnl_pct: t.profit_loss_pct,
+      confidence: t.confidence, status: t.status,
+    }));
+    _trdTradesShown = 0;
+    if (_trdTradesFull.length) {
+      renderTrdTradeTable(true);
     } else {
-      document.getElementById('trd-closed-body').innerHTML = `
-        <table class="tbl"><thead><tr>
-          <th>Zeit</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
-          <th>Ausstieg</th><th>P/L €</th><th>P/L %</th><th>Status</th>
-        </tr></thead><tbody>
-        ${closed.slice(0,15).map(t => `<tr>
-          <td>${ts2time(t.timestamp)}</td>
-          <td>${t.asset}</td>
-          <td class="${t.direction==='BUY'?'cl':'cs'}">${t.direction==='BUY'?'▲ LONG':'▼ SHORT'}</td>
-          <td>${t.entry_price?.toFixed(2)??'—'}</td>
-          <td>${t.exit_price?.toFixed(2)??'—'}</td>
-          <td class="${(t.profit_loss||0)>=0?'pp':'pn'}">${t.profit_loss!=null?eur(t.profit_loss):'—'}</td>
-          <td class="${(t.profit_loss_pct||0)>=0?'pp':'pn'}">${t.profit_loss_pct!=null?pct(t.profit_loss_pct):'—'}</td>
-          <td style="font-size:10px;color:var(--text-dim)">${t.status}</td>
-        </tr>`).join('')}
-        </tbody></table>`;
-
-      // P/L Chart by day
-      buildPLChart(closed);
+      document.getElementById('trd-closed-body').innerHTML = '<div class="empty">Keine abgeschlossenen Trades.</div>';
     }
+
+    // ── Charts ──
+    buildTrdCharts(closed);
   } catch(e) {
     document.getElementById('trd-closed-body').innerHTML = `<div class="notif err">Fehler: ${e.message}</div>`;
   }
 }
 
-function buildPLChart(closed) {
-  const byDay = {};
-  closed.forEach(t => {
-    if (t.profit_loss == null) return;
-    const day = (t.exit_timestamp || t.timestamp || '').slice(0,10);
-    byDay[day] = (byDay[day] || 0) + t.profit_loss;
+function buildTrdCharts(closed) {
+  if (!closed.length) {
+    document.getElementById('trd-equity-card').style.display = 'none';
+    document.getElementById('trd-asset-card').style.display = 'none';
+    return;
+  }
+
+  // Destroy old
+  if (trdCharts) trdCharts.destroy();
+
+  trdCharts = ChartModule.create({
+    assetCanvasId:  'trdAssetChart',
+    equityCanvasId: 'trdEquityChart',
+    resetBtnId:     'trd-chart-reset-zoom',
+    onTradeSelect:  trdTradeSelect,
+    onTradeHover:   idx => {
+      _trdHoverIdx = idx;
+      if (trdCharts) trdCharts.update();
+      document.querySelectorAll('#trd-closed-body .tbl tr.chart-hover').forEach(r => r.classList.remove('chart-hover'));
+      if (idx != null) {
+        const row = document.querySelector(`#trd-closed-body .tbl tr[data-trade-idx="${idx}"]`);
+        if (row) row.classList.add('chart-hover');
+      }
+    },
+    getSelectedIdx: () => _trdSelectedIdx,
+    getHoverIdx:    () => _trdHoverIdx,
+    getTradeList:   () => _trdTradesFull,
   });
-  const labels = Object.keys(byDay).sort().slice(-7);
-  const values = labels.map(d => parseFloat(byDay[d].toFixed(2)));
-  const fmt = l => { const dt = new Date(l); return dt.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'}); };
-  renderPLChart(labels.map(fmt), values);
+
+  // Equity curve from cumulative P/L
+  let running = 0;
+  const toMs = ts => ts ? new Date(ts).getTime() : 0;
+  const equityPts = [{ x: toMs(_trdTradesFull[0]?.entry_ts), y: 0 }];
+  _trdTradesFull.forEach((t, i) => {
+    running += t.pnl || 0;
+    running = Math.round(running * 100) / 100;
+    equityPts.push({ x: toMs(t.exit_ts || t.entry_ts), y: running, tradeIdx: i, asset: t.asset, dir: t.direction });
+  });
+
+  document.getElementById('trd-equity-card').style.display = '';
+  const first = _trdTradesFull[0]?.entry_ts?.slice(0,10) || '';
+  const last  = _trdTradesFull[_trdTradesFull.length-1]?.exit_ts?.slice(0,10) || '';
+  setText('trd-equity-badge', `${first} – ${last}`);
+  trdCharts.renderEquityChart(equityPts, false);
+
+  document.getElementById('trd-asset-card').style.display = '';
+  setText('trd-asset-badge', `${first} – ${last}`);
+  trdCharts.renderAssetChart();
+
+  // Load asset curves from default history DB
+  const assets = [...new Set(_trdTradesFull.map(t => t.asset))];
+  const startTs = _trdTradesFull[0]?.entry_ts || '';
+  const endTs   = _trdTradesFull[_trdTradesFull.length-1]?.exit_ts || '';
+  const inputDb = document.getElementById('sim-input-db')?.value || 'history.db';
+  trdCharts.setDetailDb(inputDb);
+  trdCharts.loadAssetCurves(
+    `/api/sim/candles?db=${encodeURIComponent(inputDb)}`,
+    assets, _trdTradesFull, startTs, endTs
+  );
+}
+
+function trdTradeSelect(idx) {
+  if (_trdSelectedIdx === idx) {
+    _trdSelectedIdx = null;
+    document.querySelectorAll('#trd-closed-body .tbl tr.chart-selected').forEach(r => r.classList.remove('chart-selected'));
+    if (trdCharts) { trdCharts.removeDetailCandles(); trdCharts.resetZoom(); trdCharts.updateInspectorLines(); }
+    return;
+  }
+  _trdSelectedIdx = idx;
+  document.querySelectorAll('#trd-closed-body .tbl tr.chart-selected').forEach(r => r.classList.remove('chart-selected'));
+  if (idx != null) {
+    const row = document.querySelector(`#trd-closed-body .tbl tr[data-trade-idx="${idx}"]`);
+    if (row) { row.classList.add('chart-selected'); row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    if (trdCharts) trdCharts.zoomToTrade(idx);
+  } else {
+    if (trdCharts) trdCharts.updateInspectorLines();
+  }
+}
+
+function renderTrdTradeTable(reset) {
+  if (reset) _trdTradesShown = 0;
+  const tl  = _trdTradesFull;
+  const end = Math.min(_trdTradesShown + TRD_PAGE_SIZE, tl.length);
+  const rows = tl.slice(_trdTradesShown, end).map((t, si) => {
+    const idx = _trdTradesShown + si;
+    return `<tr data-trade-idx="${idx}" onmouseenter="trdChartHover(${idx},this)" onmouseleave="trdChartHover(null,null)" onclick="trdTradeSelect(${idx})">
+      <td>${ts2time(t.entry_ts)}</td>
+      <td>${t.asset}</td>
+      <td class="${t.direction==='BUY'?'cl':'cs'}">${t.direction==='BUY'?'▲ LONG':'▼ SHORT'}</td>
+      <td>${t.entry_price?.toFixed(2)??'—'}</td>
+      <td>${t.exit_price?.toFixed(2)??'—'}</td>
+      <td class="${(t.pnl||0)>=0?'pp':'pn'}">${t.pnl!=null?eur(t.pnl):'—'}</td>
+      <td class="${(t.pnl_pct||0)>=0?'pp':'pn'}">${t.pnl_pct!=null?pct(t.pnl_pct):'—'}</td>
+      <td style="color:var(--yellow)">${t.confidence!=null?t.confidence+'/10':'—'}</td>
+      <td style="font-size:10px;color:var(--text-dim)">${t.status}</td>
+    </tr>`;
+  }).join('');
+
+  if (reset) {
+    document.getElementById('trd-closed-body').innerHTML = `
+      <div style="max-height:460px;overflow-y:auto;" id="trd-trades-scroll">
+        <div style="overflow-x:auto;">
+          <table class="tbl"><thead><tr>
+            <th>Datum/Zeit</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
+            <th>Ausstieg</th><th>P/L €</th><th>P/L %</th><th>Conf</th><th>Status</th>
+          </tr></thead><tbody id="trd-trades-tbody"></tbody></table>
+        </div>
+      </div>`;
+  }
+  const tbody = document.getElementById('trd-trades-tbody');
+  if (tbody) tbody.insertAdjacentHTML('beforeend', rows);
+  _trdTradesShown = end;
+}
+
+function trdChartHover(idx, rowEl) {
+  _trdHoverIdx = idx != null ? Number(idx) : null;
+  if (trdCharts) trdCharts.update();
+  document.querySelectorAll('#trd-closed-body .tbl tr.chart-hover').forEach(r => r.classList.remove('chart-hover'));
+  if (rowEl) rowEl.classList.add('chart-hover');
+}
+
+async function closeTrdPosition(dealId, asset) {
+  if (!confirm(`Position ${asset} wirklich schliessen?`)) return;
+  try {
+    await apiFetch(`/api/positions/${dealId}/close`, { method: 'POST' });
+    loadTradingTrades();
+  } catch(e) { alert('Fehler: ' + e.message); }
+}
+
+async function pollTradingStatus() {
+  try {
+    await refreshBotStatus();
+    updateTradingBotCard(botRunning);
+    updateTrdKPIs();
+    // Refresh open positions
+    const d = await apiFetch('/api/trades?limit=5&status=OPEN');
+    const open = d.trades || [];
+    setText('trd-open-badge', open.length);
+    if (open.length === 0) {
+      document.getElementById('trd-open-body').innerHTML = '<div class="empty">Keine offenen Positionen.</div>';
+    } else {
+      document.getElementById('trd-open-body').innerHTML = `
+        <table class="tbl"><thead><tr>
+          <th>Zeit</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
+          <th>SL</th><th>TP</th><th>Conf</th><th></th>
+        </tr></thead><tbody>
+        ${open.map(t => `<tr>
+          <td>${ts2time(t.timestamp)}</td><td>${t.asset}</td>
+          <td class="${t.direction==='BUY'?'cl':'cs'}">${t.direction==='BUY'?'▲ LONG':'▼ SHORT'}</td>
+          <td>${t.entry_price?.toFixed(2)??'—'}</td>
+          <td style="color:var(--red)">${t.stop_loss?.toFixed(2)??'—'}</td>
+          <td style="color:var(--green)">${t.take_profit?.toFixed(2)??'—'}</td>
+          <td style="color:var(--yellow)">${t.confidence??'—'}/10</td>
+          <td><button class="btn btn-danger btn-sm" onclick="closeTrdPosition('${t.deal_id}','${t.asset}')">Schliessen</button></td>
+        </tr>`).join('')}</tbody></table>`;
+    }
+  } catch(e) { console.warn('pollTrading:', e); }
 }
 
 /* ─── MULTI-SELECT: ASSETS (SIM) ─────────────────────────── */

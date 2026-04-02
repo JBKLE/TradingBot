@@ -100,7 +100,7 @@ MIN_RISK_REWARD_RATIO: float = float(os.getenv("MIN_RISK_REWARD_RATIO", "1.5")) 
 ACCOUNT_BALANCE_LIMIT: float = float(os.getenv("ACCOUNT_BALANCE_LIMIT", "500.0"))
 
 # Kill-switch – set TRADING_ENABLED=false to stop all trade execution
-TRADING_ENABLED: bool = os.getenv("TRADING_ENABLED", "true").lower() == "true"
+TRADING_ENABLED: bool = os.getenv("TRADING_ENABLED", "false").lower() == "true"
 
 # ── Watchlist – Capital.com epic codes ────────────────────────────────────────
 WATCHLIST: dict[str, dict[str, str]] = {

@@ -36,6 +36,18 @@ from .fetch_history import HISTORY_DB_PATH
 
 logger = logging.getLogger(__name__)
 
+
+def _holding_nights(entry_ts: str, exit_ts: str) -> int:
+    """Berechnet die Anzahl Uebernachtungen zwischen Entry und Exit (22:00 UTC)."""
+    from datetime import datetime
+    try:
+        e = datetime.fromisoformat(entry_ts)
+        x = datetime.fromisoformat(exit_ts)
+        return max(0, (x.date() - e.date()).days)
+    except Exception:
+        return 0
+
+
 DEFAULT_CONFIDENCE_THRESHOLD = 8
 DEFAULT_SL_PCT = 0.003
 DEFAULT_TP_PCT = 0.005
@@ -398,6 +410,7 @@ class TimelineSimulator:
 
                         fin: dict | None = None
                         if fin_enabled:
+                            nights = _holding_nights(tr["entry_timestamp"], current_ts)
                             fin = calculate_trade_financials(
                                 asset=asset,
                                 direction=tr["direction"],
@@ -407,6 +420,7 @@ class TimelineSimulator:
                                 capital=running_capital,
                                 risk_pct=risk_pct,
                                 leverage=leverage,
+                                holding_nights=nights,
                             )
                             running_capital += fin["netto_pnl_eur"]
                             self.current_capital = running_capital
@@ -478,6 +492,7 @@ class TimelineSimulator:
 
                         fin_close: dict | None = None
                         if fin_enabled:
+                            nights = _holding_nights(tr["entry_timestamp"], current_ts)
                             fin_close = calculate_trade_financials(
                                 asset=asset,
                                 direction=tr["direction"],
@@ -487,6 +502,7 @@ class TimelineSimulator:
                                 capital=running_capital,
                                 risk_pct=risk_pct,
                                 leverage=leverage,
+                                holding_nights=nights,
                             )
                             running_capital += fin_close["netto_pnl_eur"]
                             self.current_capital = running_capital
@@ -542,6 +558,7 @@ class TimelineSimulator:
 
             fin = None
             if fin_enabled:
+                nights = _holding_nights(tr["entry_timestamp"], timeline[-1])
                 fin = calculate_trade_financials(
                     asset=asset,
                     direction=tr["direction"],
@@ -551,6 +568,7 @@ class TimelineSimulator:
                     capital=running_capital,
                     risk_pct=risk_pct,
                     leverage=leverage,
+                    holding_nights=nights,
                 )
                 running_capital += fin["netto_pnl_eur"]
                 self.current_capital = running_capital

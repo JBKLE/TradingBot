@@ -1291,7 +1291,7 @@ def create_api() -> FastAPI:
             raise HTTPException(500, str(exc))
 
     # ── Bot-Steuerung ──────────────────────────────────────────────────────
-    _bot_state: dict = {"running": True}
+    _bot_state: dict = {"running": False}
 
     @app.get("/api/bot/status")
     async def get_bot_status():
@@ -1309,7 +1309,55 @@ def create_api() -> FastAPI:
         _bot_state["running"] = False
         config.TRADING_ENABLED = False
         logger.info("Bot gestoppt (via Dashboard)")
-        return {"status": "stopped", "running": False}
+        # Offene Positionen zurueckgeben damit Frontend fragen kann
+        import aiosqlite
+        open_pos = []
+        try:
+            async with aiosqlite.connect(config.DB_PATH) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    "SELECT deal_id, asset, direction FROM trades WHERE status = 'OPEN'"
+                ) as cur:
+                    async for row in cur:
+                        open_pos.append(dict(row))
+        except Exception:
+            pass
+        return {"status": "stopped", "running": False, "open_positions": open_pos}
+
+    @app.post("/api/positions/{deal_id}/close")
+    async def close_position(deal_id: str):
+        """Eine einzelne offene Position schliessen."""
+        try:
+            result = await broker.close_position(deal_id)
+            logger.info("Position manuell geschlossen: %s", deal_id)
+            return {"closed": True, "deal_id": deal_id, "result": result}
+        except Exception as exc:
+            logger.error("Position close failed: %s – %s", deal_id, exc)
+            raise HTTPException(500, str(exc))
+
+    @app.post("/api/positions/close-all")
+    async def close_all_positions():
+        """Alle offenen Positionen schliessen."""
+        import aiosqlite
+        closed = []
+        errors = []
+        try:
+            async with aiosqlite.connect(config.DB_PATH) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    "SELECT deal_id, asset FROM trades WHERE status = 'OPEN'"
+                ) as cur:
+                    rows = [dict(r) async for r in cur]
+            for row in rows:
+                try:
+                    await broker.close_position(row["deal_id"])
+                    closed.append(row["deal_id"])
+                    logger.info("Position geschlossen: %s (%s)", row["deal_id"], row["asset"])
+                except Exception as exc:
+                    errors.append({"deal_id": row["deal_id"], "error": str(exc)})
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+        return {"closed": closed, "errors": errors, "total": len(closed)}
 
     # ── GET /api/snapshots ─────────────────────────────────────────────────
     @app.get("/api/snapshots")
@@ -1344,7 +1392,7 @@ def create_api() -> FastAPI:
                 db.row_factory = aiosqlite.Row
                 async with db.execute(
                     f"SELECT id, timestamp, asset, direction, entry_price, stop_loss, "
-                    f"take_profit, position_size, confidence, status, exit_price, "
+                    f"take_profit, position_size, confidence, deal_id, status, exit_price, "
                     f"exit_timestamp, profit_loss, profit_loss_pct "
                     f"FROM trades {where} ORDER BY timestamp DESC LIMIT ?",
                     (limit,),

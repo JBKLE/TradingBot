@@ -332,6 +332,19 @@ DEFAULT_SPREADS = {
     "NATURALGAS": 0.005,
 }
 
+# Capital.com Overnight-Finanzierungsrate (pro Nacht, auf Positionswert)
+# Typisch 0.007%–0.01% je nach Asset (Annualized ~2.5-3.6%)
+OVERNIGHT_RATES = {
+    "GOLD": 0.00008,
+    "SILVER": 0.00008,
+    "OIL_CRUDE": 0.0001,
+    "NATURALGAS": 0.0001,
+}
+
+# Max SL-Distanz fuer Lot-Sizing (% vom Entry-Preis).
+# Wenn SL effektiv deaktiviert (>5%), wird auf diesen Wert gekappt.
+LOT_SIZE_MAX_SL_PCT = 0.02  # 2%
+
 
 def calculate_trade_financials(
     asset: str,
@@ -343,6 +356,7 @@ def calculate_trade_financials(
     risk_pct: float,
     leverage: int,
     spread: float | None = None,
+    holding_nights: int = 0,
 ) -> dict:
     """Berechnet die finanzielle Auswirkung eines Trades (alles in EUR).
 
@@ -356,10 +370,11 @@ def calculate_trade_financials(
         risk_pct: Risiko pro Trade (z.B. 0.01 = 1%)
         leverage: Hebel (z.B. 20)
         spread: Spread in Preis-Einheiten (None = Default)
+        holding_nights: Anzahl Uebernacht-Halteperioden
 
     Returns:
         Dict mit lot_size, position_value_eur, margin_eur,
-        brutto_pnl_eur, spread_cost_eur, netto_pnl_eur
+        brutto_pnl_eur, spread_cost_eur, overnight_cost_eur, netto_pnl_eur
     """
     if spread is None:
         spread = DEFAULT_SPREADS.get(asset, 0.03)
@@ -368,6 +383,11 @@ def calculate_trade_financials(
     sl_distance = abs(entry_price - sl_price)
     if sl_distance == 0:
         sl_distance = entry_price * 0.003  # fallback 0.3%
+
+    # Cap: wenn SL effektiv deaktiviert (> 5% vom Preis), auf 2% begrenzen
+    max_sl = entry_price * LOT_SIZE_MAX_SL_PCT
+    if sl_distance > entry_price * 0.05:
+        sl_distance = max_sl
 
     # Risikobetrag in EUR
     risk_amount_eur = capital * risk_pct
@@ -385,8 +405,12 @@ def calculate_trade_financials(
     # Spread-Kosten (einmal beim Einstieg)
     spread_cost_eur = lot_size * spread
 
+    # Overnight-Finanzierungskosten
+    overnight_rate = OVERNIGHT_RATES.get(asset, 0.00008)
+    overnight_cost_eur = position_value_eur * overnight_rate * holding_nights
+
     # Netto-P&L
-    netto_pnl_eur = brutto_pnl_eur - spread_cost_eur
+    netto_pnl_eur = brutto_pnl_eur - spread_cost_eur - overnight_cost_eur
 
     # Margin-Call Check
     margin_call = margin_eur > capital
@@ -397,6 +421,7 @@ def calculate_trade_financials(
         "margin_eur": round(margin_eur, 2),
         "brutto_pnl_eur": round(brutto_pnl_eur, 2),
         "spread_cost_eur": round(spread_cost_eur, 2),
+        "overnight_cost_eur": round(overnight_cost_eur, 2),
         "netto_pnl_eur": round(netto_pnl_eur, 2),
         "margin_call": margin_call,
     }
