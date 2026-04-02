@@ -17,16 +17,19 @@ import torch
 
 from . import config
 from .ai_analyzer import (
-    ACTION_SIZE,
     ASSET_INDEX,
-    MAX_WINDOW,
+    MODEL_VERSIONS,
+    ModelVersionConfig,
     DuelingDQN,
     _atr,
+    _bollinger_width,
     _ema,
     _get_latest_model_path,
+    _macd_histogram,
     _rsi,
     _scale_confidence,
     calculate_trade_financials,
+    parse_model_filename,
     DEFAULT_SPREADS,
 )
 from .fetch_history import HISTORY_DB_PATH
@@ -66,6 +69,7 @@ class TimelineSimulator:
         self._models_dir = models_dir or config.AI_MODELS_DIR
         self._device = self._resolve_device()
         self._net: DuelingDQN | None = None
+        self._vcfg: ModelVersionConfig = MODEL_VERSIONS["v1"]  # Default, wird bei _load_model aktualisiert
         self._cancelled = False
         self.model_path: str = ""   # gesetzt sobald Modell geladen ist
         # Financial params
@@ -103,10 +107,47 @@ class TimelineSimulator:
             return self._net
         path = self._explicit_model_path or _get_latest_model_path(self._models_dir)
         self.model_path = path
-        logger.info("Timeline sim: loading model %s (device=%s)", path, self._device)
-        net = DuelingDQN(ACTION_SIZE).to(self._device)
+
+        # Version aus Dateinamen erkennen
+        info = parse_model_filename(path)
+        version = info.get("version") or "v1"
+        self._vcfg = MODEL_VERSIONS.get(version, MODEL_VERSIONS["v1"])
+
+        logger.info(
+            "Timeline sim: loading model %s (version=%s, device=%s)",
+            path, self._vcfg.version, self._device,
+        )
+
         ckpt = torch.load(path, map_location=self._device, weights_only=True)
-        net.load_state_dict(ckpt["policy_net"])
+        sd = ckpt["policy_net"]
+
+        # Auto-detect Architektur aus Checkpoint (wie in DQNAnalyzer)
+        from .ai_analyzer import DQNAnalyzer
+        detected = DQNAnalyzer._detect_version_from_checkpoint(sd)
+        if detected and detected != self._vcfg.version:
+            logger.warning(
+                "Timeline sim: Checkpoint ist '%s', nicht '%s' – korrigiere",
+                detected, self._vcfg.version,
+            )
+            self._vcfg = MODEL_VERSIONS[detected]
+
+        # Action-Size Feinabgleich
+        adv_key = "advantage_stream.2.weight"
+        if adv_key in sd:
+            ckpt_actions = sd[adv_key].shape[0]
+            if ckpt_actions != self._vcfg.action_size:
+                from dataclasses import replace
+                matching = [v for v in MODEL_VERSIONS.values() if v.action_size == ckpt_actions]
+                if matching:
+                    self._vcfg = replace(
+                        self._vcfg,
+                        action_size=ckpt_actions,
+                        action_map=matching[0].action_map,
+                        actions=matching[0].actions,
+                    )
+
+        net = DuelingDQN(self._vcfg).to(self._device)
+        net.load_state_dict(sd)
         net.eval()
         self._net = net
         return net
@@ -121,14 +162,17 @@ class TimelineSimulator:
         position_dir: float = 0.0,
         unrealised_r: float = 0.0,
     ) -> np.ndarray:
-        avail      = len(window)
-        ohlcv_buf  = np.zeros((MAX_WINDOW, 5), dtype=np.float32)
+        vcfg = self._vcfg
+        max_window = vcfg.max_window
+        avail = min(len(window), max_window)
+        ohlcv_buf = np.zeros((max_window, 5), dtype=np.float32)
 
         if avail > 0:
-            opens  = window[:, 0]
-            highs  = window[:, 1]
-            lows   = window[:, 2]
-            closes = window[:, 3]
+            w = window[-avail:]
+            opens  = w[:, 0]
+            highs  = w[:, 1]
+            lows   = w[:, 2]
+            closes = w[:, 3]
             ref    = float(closes[-1]) or 1.0
 
             rows = np.column_stack([
@@ -138,17 +182,24 @@ class TimelineSimulator:
                 closes / ref - 1,
                 np.zeros(avail),
             ]).astype(np.float32)
-            ohlcv_buf[MAX_WINDOW - avail:] = np.clip(rows, -5.0, 5.0)
+            ohlcv_buf[max_window - avail:] = np.clip(rows, -5.0, 5.0)
 
             rsi     = (_rsi(closes) - 50.0) / 50.0
             atr_v   = _atr(highs, lows, closes)
             atr_pct = float(np.clip(atr_v / (ref + 1e-8), 0, 0.05) / 0.05)
             e20     = float(np.clip(_ema(closes, min(20, avail)) / ref - 1, -0.1, 0.1) / 0.1)
             e50     = float(np.clip(_ema(closes, min(50, avail)) / ref - 1, -0.1, 0.1) / 0.1)
-        else:
-            rsi = atr_pct = e20 = e50 = 0.0
 
-        indicators = np.array([rsi, atr_pct, e20, e50], dtype=np.float32)
+            ind_list = [rsi, atr_pct, e20, e50]
+            # v2: MACD + Bollinger
+            if vcfg.n_indicators >= 6:
+                # Fuer Indikatoren brauchen wir die vollen Closes (nicht nur window)
+                ind_list.append(_macd_histogram(closes))
+                ind_list.append(_bollinger_width(closes))
+        else:
+            ind_list = [0.0] * vcfg.n_indicators
+
+        indicators = np.array(ind_list, dtype=np.float32)
         asset_oh   = np.zeros(4, dtype=np.float32)
         if asset in ASSET_INDEX:
             asset_oh[ASSET_INDEX[asset]] = 1.0
@@ -376,8 +427,8 @@ class TimelineSimulator:
                             margin_call = True
 
                 # Queue for inference (only if no open trade + enough history)
-                if asset not in open_trades and ci >= MAX_WINDOW:
-                    window = candles[ci - MAX_WINDOW + 1: ci + 1]
+                if asset not in open_trades and ci >= self._vcfg.max_window:
+                    window = candles[ci - self._vcfg.max_window + 1: ci + 1]
                     states_to_infer.append((asset, window, c_close))
 
             if margin_call:
@@ -391,8 +442,9 @@ class TimelineSimulator:
 
                 for (asset, _w, c_close), (action_id, softmax_conf) in zip(states_to_infer, results):
                     confidence = _scale_confidence(softmax_conf)
-                    if action_id in (1, 2) and confidence >= self.confidence_threshold:
-                        direction = "BUY" if action_id == 1 else "SELL"
+                    bot_action = self._vcfg.action_map.get(action_id, "HOLD")
+                    if bot_action in ("BUY", "SELL") and confidence >= self.confidence_threshold:
+                        direction = bot_action
                         trade_id += 1
                         sl = c_close * (1 - sl_pct) if direction == "BUY" else c_close * (1 + sl_pct)
                         tp = c_close * (1 + tp_pct) if direction == "BUY" else c_close * (1 - tp_pct)

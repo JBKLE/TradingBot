@@ -549,7 +549,8 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
         <div class="form-grid mb14">
           <div class="f-field">
             <label>Modell</label>
-            <select id="sim-model"></select>
+            <select id="sim-model" onchange="onModelSelected()"></select>
+            <span id="sim-model-info" style="font-size:11px;color:#007a1f;margin-top:2px;display:block;"></span>
           </div>
           <div class="f-field">
             <label>Assets</label>
@@ -1882,14 +1883,49 @@ async function loadDatenPage() {
   loadHistoryStatus();
 }
 
+let _modelsCache = [];
+let _versionsCache = {};
 async function loadModels() {
   try {
     const d = await apiFetch('/api/models');
+    _modelsCache = d.models || [];
+    _versionsCache = d.versions || {};
     const sel = document.getElementById('sim-model');
-    sel.innerHTML = d.models.length
-      ? d.models.map(m => `<option value="${m.path}">${m.name}</option>`).join('')
+    sel.innerHTML = _modelsCache.length
+      ? _modelsCache.map(m => {
+          const ver = m.version ? ` [${m.version}]` : '';
+          const ast = m.asset || '';
+          return `<option value="${m.path}" data-version="${m.version||''}" data-asset="${ast}" data-parsed="${m.parsed}">${m.name}${ver}</option>`;
+        }).join('')
       : '<option value="">Kein Modell gefunden</option>';
+    onModelSelected();
   } catch { document.getElementById('sim-model').innerHTML = '<option value="">Fehler beim Laden</option>'; }
+}
+function onModelSelected() {
+  const sel = document.getElementById('sim-model');
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt) return;
+  const version = opt.dataset.version || '';
+  const asset = opt.dataset.asset || '';
+  const parsed = opt.dataset.parsed === 'true' || opt.dataset.parsed === 'True';
+  const info = document.getElementById('sim-model-info');
+  // Version-Info anzeigen
+  const vCfg = _versionsCache[version];
+  if (version && vCfg) {
+    info.innerHTML = `Version: <b>${version}</b> · ${vCfg.max_window} Candles · ${vCfg.n_indicators} Indikatoren · ${vCfg.action_size} Actions · State: ${vCfg.state_size}`;
+  } else if (!parsed) {
+    info.innerHTML = '<span style="color:#ff4444;">Version nicht erkannt</span>';
+  } else {
+    info.innerHTML = '';
+  }
+  // Asset automatisch vorauswaehlen
+  if (asset && parsed) {
+    const cbs = document.querySelectorAll('.sim-asset-cb');
+    const allCb = document.getElementById('sim-asset-all');
+    cbs.forEach(cb => { cb.checked = cb.value === asset; });
+    if (allCb) allCb.checked = false;
+    updateAssetLabel();
+  }
 }
 
 let _allDbs = [];
