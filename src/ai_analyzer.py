@@ -531,6 +531,7 @@ class DQNAnalyzer:
         return {
             "model_file": os.path.basename(path),
             "version": self._vcfg.version,
+            "filename_version": info.get("version"),
             "asset": self._override_asset or info.get("asset"),
             "config": {
                 "max_window": self._vcfg.max_window,

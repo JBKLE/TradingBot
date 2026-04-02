@@ -1458,8 +1458,11 @@ async function loadTrdActiveModel() {
       setText('trd-active-model-name', d.model_file);
       const c = d.config || {};
       const actions = c.actions ? Object.values(c.actions).join(', ') : '';
+      const verLabel = d.filename_version && d.filename_version !== d.version
+        ? `${d.filename_version} (Architektur: ${d.version})`
+        : d.version;
       setText('trd-active-model-detail',
-        `${d.version} · ${c.max_window} Candles · ${c.action_size} Aktionen (${actions}) · State ${c.state_size}`);
+        `${verLabel} · ${c.max_window} Candles · ${c.action_size} Aktionen (${actions}) · State ${c.state_size}`);
       // Auto-select assets from model
       autoSelectTrdAssets(d.asset, d.model_file);
     } else {
