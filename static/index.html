@@ -2055,14 +2055,15 @@ function showSimResults(r, fromHistory) {
                            asset: t.asset, dir: t.direction, conf: t.confidence });
     });
 
-    document.getElementById('sim-capital-chart-card').style.display = '';
-    setText('sim-capital-chart-badge', badge);
-    renderCapitalChart(equityPoints, isCapital);
-
-    // Asset chart (empty, filled by loadAssetCurves)
+    // Asset chart first (creates simChartCtx)
     document.getElementById('sim-chart-card').style.display = '';
     setText('sim-chart-badge', badge);
     renderSimChart();
+
+    // Equity chart (needs simChartCtx)
+    document.getElementById('sim-capital-chart-card').style.display = '';
+    setText('sim-capital-chart-badge', badge);
+    renderCapitalChart(equityPoints, isCapital);
 
     // Load asset price overlays asynchronously
     const assets = [...new Set(tl.map(t => t.asset))];
