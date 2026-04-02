@@ -297,6 +297,10 @@ const ChartModule = (() => {
       }
 
       if (!newDatasets.length) return;
+      // Remove old asset curve + scatter datasets (keep inspector lines etc.)
+      assetChart.data.datasets = assetChart.data.datasets.filter(
+        ds => ds._inspectId || ds._detailId
+      );
       assetChart.options.scales.yR.display = true;
       newDatasets.forEach(ds => assetChart.data.datasets.push(ds));
       assetChart.update('none');

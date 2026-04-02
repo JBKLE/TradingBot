@@ -21,6 +21,9 @@ from .env_writer import read_env_file, update_env_file
 
 logger = logging.getLogger(__name__)
 
+# SSE-Event: wird von unified_tick gesetzt wenn neue Signale vorliegen
+_signal_event: asyncio.Event = asyncio.Event()
+
 
 def create_api() -> FastAPI:
     """Erstellt die FastAPI-App mit allen Endpunkten."""
@@ -1305,10 +1308,48 @@ def create_api() -> FastAPI:
     async def get_bot_status():
         return {"running": _bot_state["running"], "settings": _bot_settings}
 
+    # SSE: Signal-Event für Echtzeit-Push (Modul-Level für Import aus main.py)
+    global _signal_event
+
     @app.get("/api/bot/signals")
     async def get_bot_signals():
         """Letzte Signale aus dem unified_tick (gecacht)."""
         return {"signals": config.BOT_LAST_SIGNALS}
+
+    @app.get("/api/bot/signals/stream")
+    async def stream_bot_signals():
+        """SSE-Stream: pusht neue Signale sofort wenn verfügbar."""
+        import json as _json
+
+        async def event_generator():
+            last_ts = None
+            # Send current state immediately
+            if config.BOT_LAST_SIGNALS:
+                data = _json.dumps({"signals": config.BOT_LAST_SIGNALS})
+                yield f"data: {data}\n\n"
+                last_ts = config.BOT_LAST_SIGNALS[0].get("checked_at") if config.BOT_LAST_SIGNALS else None
+
+            while True:
+                try:
+                    _signal_event.clear()
+                    await asyncio.wait_for(_signal_event.wait(), timeout=30)
+                except asyncio.TimeoutError:
+                    # Send heartbeat to keep connection alive
+                    yield ": heartbeat\n\n"
+                    continue
+
+                if config.BOT_LAST_SIGNALS:
+                    new_ts = config.BOT_LAST_SIGNALS[0].get("checked_at")
+                    if new_ts != last_ts:
+                        last_ts = new_ts
+                        data = _json.dumps({"signals": config.BOT_LAST_SIGNALS})
+                        yield f"data: {data}\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.get("/api/bot/settings")
     async def get_bot_settings():

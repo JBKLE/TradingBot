@@ -940,7 +940,10 @@ function nav(el) {
   document.getElementById('topbarTitle').textContent = PAGE_TITLES[page];
   currentPage = page;
   // Clear trading polling when leaving page
-  if (page !== 'trading' && _trdPollInterval) { clearInterval(_trdPollInterval); _trdPollInterval = null; }
+  if (page !== 'trading') {
+    if (_trdPollInterval) { clearInterval(_trdPollInterval); _trdPollInterval = null; }
+    if (_trdSignalSSE) { _trdSignalSSE.close(); _trdSignalSSE = null; }
+  }
   if (page === 'trading') loadTradingPage();
   if (page === 'daten')  { loadDatenPage(); loadSimHistory(); }
   if (page === 'settings') loadSettings();
@@ -1391,6 +1394,7 @@ let _trdTradesFull  = [];
 let _trdTradesShown = 0;
 const TRD_PAGE_SIZE = 50;
 let _trdPollInterval = null;
+let _trdSignalSSE = null;
 
 async function loadTradingPage() {
   updateTradingBotCard(botRunning);
@@ -1398,11 +1402,32 @@ async function loadTradingPage() {
   await loadTrdModels();
   loadTrdActiveModel();
   await loadTrdSettings();
-  pollTrdSignals();
+  connectTrdSignalSSE();
   loadTradingTrades();
-  // Start polling every 30s
+  // Start polling every 30s (KPIs, positions — NOT signals)
   if (_trdPollInterval) clearInterval(_trdPollInterval);
   _trdPollInterval = setInterval(pollTradingStatus, 30000);
+}
+
+function connectTrdSignalSSE() {
+  if (_trdSignalSSE) _trdSignalSSE.close();
+  _trdSignalSSE = new EventSource('/api/bot/signals/stream');
+  _trdSignalSSE.onmessage = (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      if (d.signals && d.signals.length) {
+        _lastSignals = d.signals;
+        const trdAssets = getTrdActiveAssets();
+        document.getElementById('trd-signals').innerHTML = trdSignalsHtml(d.signals, trdAssets);
+        const latest = d.signals.reduce((max, s) => (s.checked_at || '') > max ? s.checked_at : max, '');
+        if (latest) setText('trd-sig-ts', 'Bot: ' + new Date(latest).toLocaleTimeString('de-DE'));
+      }
+    } catch(err) { console.warn('SSE parse error:', err); }
+  };
+  _trdSignalSSE.onerror = () => {
+    // Reconnect on error (EventSource does this automatically, but log it)
+    console.warn('Signal SSE connection lost, reconnecting...');
+  };
 }
 
 async function updateTrdKPIs() {
@@ -1756,8 +1781,7 @@ async function pollTradingStatus() {
     await refreshBotStatus();
     updateTradingBotCard(botRunning);
     await updateTrdKPIs();
-    // Refresh bot signals (from unified_tick cache)
-    await pollTrdSignals();
+    // Signals come via SSE now — just refresh positions
     // Refresh open positions
     const d = await apiFetch('/api/trades?limit=5&status=OPEN');
     const open = d.trades || [];
