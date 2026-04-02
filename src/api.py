@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import config, database
-from .ai_analyzer import DQNAnalyzer
+from .ai_analyzer import DQNAnalyzer, list_available_models, MODEL_VERSIONS, ASSETS
 from .broker import CapitalComBroker, CapitalComError
 from .env_writer import read_env_file, update_env_file
 
@@ -421,24 +421,21 @@ def create_api() -> FastAPI:
     # ── POST /api/test/dqn ──────────────────────────────────────────
     @app.post("/api/test/dqn")
     async def test_dqn_model():
-        """Testet ob das DQN-Modell geladen werden kann."""
+        """Testet ob das DQN-Modell geladen werden kann (versionsbewusst)."""
         t0 = time.time()
         try:
-            from .ai_analyzer import _get_latest_model_path, DuelingDQN, ACTION_SIZE
-            import torch
-            model_path = _get_latest_model_path(config.AI_MODELS_DIR)
-            model_name = os.path.basename(model_path)
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            net = DuelingDQN(ACTION_SIZE).to(device)
-            ckpt = torch.load(model_path, map_location=device, weights_only=True)
-            net.load_state_dict(ckpt["policy_net"])
+            analyzer = DQNAnalyzer()
+            analyzer._load_model()
+            info = analyzer.get_current_model_info()
             latency_ms = int((time.time() - t0) * 1000)
             return {
                 "status": "ok",
                 "latency_ms": latency_ms,
-                "model": model_name,
-                "device": str(device),
-                "message": f"DQN-Modell geladen: {model_name} ({device})",
+                "model": info["model_file"],
+                "version": info["version"],
+                "device": str(analyzer._device),
+                "config": info["config"],
+                "message": f"DQN-Modell geladen: {info['model_file']} ({info['version']}, {analyzer._device})",
             }
         except Exception as exc:
             latency_ms = int((time.time() - t0) * 1000)
@@ -1435,17 +1432,56 @@ def create_api() -> FastAPI:
     # ── GET /api/models ────────────────────────────────────────────────────
     @app.get("/api/models")
     async def get_models():
-        """Alle .pt-Modelle im models/-Verzeichnis."""
+        """Alle .pt-Modelle mit geparsten Version/Asset-Infos."""
         try:
-            model_dir = config.AI_MODELS_DIR
-            models = []
-            for p in sorted(_glob.glob(os.path.join(model_dir, "*.pt"))):
-                models.append({
-                    "name": os.path.basename(p),
-                    "path": p,
-                    "size_kb": round(os.path.getsize(p) / 1024, 1),
-                })
-            return {"models": models}
+            models = list_available_models()
+            return {
+                "models": models,
+                "versions": {
+                    k: {
+                        "max_window": v.max_window,
+                        "n_indicators": v.n_indicators,
+                        "action_size": v.action_size,
+                        "actions": v.action_map,
+                        "state_size": v.state_size,
+                        "sl_pct": v.sl_pct,
+                        "tp_pct": v.tp_pct,
+                    }
+                    for k, v in MODEL_VERSIONS.items()
+                },
+                "assets": ASSETS,
+            }
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+
+    # ── POST /api/models/select ───────────────────────────────────────────
+    class ModelSelectRequest(BaseModel):
+        filename: str | None = None  # z.B. "GOLD_v1_run1.pt" (None = neuestes)
+        version: str | None = None   # z.B. "v1", "v2" (None = auto-detect)
+        asset: str | None = None     # z.B. "GOLD" (None = auto-detect)
+
+    @app.post("/api/models/select")
+    async def select_model(body: ModelSelectRequest):
+        """Modell auswaehlen und Architektur-Einstellungen auto-konfigurieren."""
+        try:
+            analyzer = DQNAnalyzer()
+            result = analyzer.select_model(
+                filename=body.filename,
+                version=body.version,
+                asset=body.asset,
+            )
+            return result
+        except Exception as exc:
+            logger.exception("Model selection failed: %s", exc)
+            raise HTTPException(500, str(exc))
+
+    # ── GET /api/models/current ──────────────────────────────────────────
+    @app.get("/api/models/current")
+    async def get_current_model():
+        """Infos zum aktuell geladenen Modell."""
+        try:
+            analyzer = DQNAnalyzer()
+            return analyzer.get_current_model_info()
         except Exception as exc:
             raise HTTPException(500, str(exc))
 

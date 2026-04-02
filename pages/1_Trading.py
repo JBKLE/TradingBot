@@ -79,6 +79,141 @@ st.markdown("---")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# MODELL-AUSWAHL
+# ══════════════════════════════════════════════════════════════════════════════
+
+with st.expander("◈ DQN-MODELL", expanded=False):
+    # Verfuegbare Modelle laden
+    _models_data = {}
+    try:
+        _mr = httpx.get(f"{BOT_API_URL}/api/models", timeout=5)
+        if _mr.status_code == 200:
+            _models_data = _mr.json()
+    except Exception:
+        pass
+
+    _model_list = _models_data.get("models", [])
+    _versions_info = _models_data.get("versions", {})
+    _assets_list = _models_data.get("assets", [])
+
+    if not _model_list:
+        st.warning("Keine Modelle gefunden.")
+    else:
+        # Aktuelle Modellinfo laden
+        _current_info = {}
+        try:
+            _ci = httpx.get(f"{BOT_API_URL}/api/models/current", timeout=5)
+            if _ci.status_code == 200:
+                _current_info = _ci.json()
+        except Exception:
+            pass
+
+        _current_file = _current_info.get("model_file", "")
+        _current_version = _current_info.get("version", "?")
+        _current_asset = _current_info.get("asset", "?")
+
+        st.caption(
+            f"Aktuell: **{_current_file}** "
+            f"(Version: `{_current_version}`, Asset: `{_current_asset}`)"
+        )
+
+        # Modell-Dropdown
+        _model_names = [m["filename"] for m in _model_list]
+        _default_idx = _model_names.index(_current_file) if _current_file in _model_names else 0
+        _selected_model = st.selectbox(
+            "Modell:", _model_names,
+            index=_default_idx,
+            key="model_select",
+        )
+
+        # Info zum ausgewaehlten Modell
+        _sel_info = next((m for m in _model_list if m["filename"] == _selected_model), {})
+        _auto_version = _sel_info.get("version")
+        _auto_asset = _sel_info.get("asset")
+        _parsed = _sel_info.get("parsed", False)
+
+        _mc1, _mc2 = st.columns(2)
+
+        with _mc1:
+            if _parsed and _auto_version:
+                st.success(f"Auto-erkannt: Version `{_auto_version}`")
+                _version_options = list(_versions_info.keys())
+                _ver_idx = _version_options.index(_auto_version) if _auto_version in _version_options else 0
+                _sel_version = st.selectbox(
+                    "Version:", _version_options,
+                    index=_ver_idx,
+                    key="model_version",
+                    help="Automatisch erkannt. Manuell änderbar falls nötig.",
+                )
+            else:
+                st.warning("Version nicht erkannt — bitte manuell wählen")
+                _version_options = list(_versions_info.keys())
+                _sel_version = st.selectbox(
+                    "Version:", _version_options,
+                    key="model_version",
+                )
+
+        with _mc2:
+            if _parsed and _auto_asset:
+                st.success(f"Auto-erkannt: Asset `{_auto_asset}`")
+                _asset_idx = _assets_list.index(_auto_asset) if _auto_asset in _assets_list else 0
+                _sel_asset = st.selectbox(
+                    "Asset:", _assets_list,
+                    index=_asset_idx,
+                    key="model_asset",
+                    help="Automatisch erkannt. Manuell änderbar falls nötig.",
+                )
+            else:
+                st.warning("Asset nicht erkannt — bitte manuell wählen")
+                _sel_asset = st.selectbox(
+                    "Asset:", _assets_list,
+                    key="model_asset",
+                )
+
+        # Version-Details anzeigen
+        _v_info = _versions_info.get(_sel_version, {})
+        if _v_info:
+            _dc1, _dc2, _dc3, _dc4 = st.columns(4)
+            _dc1.metric("Candles", _v_info.get("max_window", "?"))
+            _dc2.metric("Indikatoren", _v_info.get("n_indicators", "?"))
+            _dc3.metric("Actions", _v_info.get("action_size", "?"))
+            _dc4.metric("State-Size", _v_info.get("state_size", "?"))
+            st.caption(
+                f"Actions: {_v_info.get('actions', {})} · "
+                f"SL: {_v_info.get('sl_pct', 0)*100:.1f}% · "
+                f"TP: {_v_info.get('tp_pct', 0)*100:.1f}%"
+            )
+
+        # Aktivieren-Button
+        _needs_override = not _parsed or _sel_version != _auto_version or _sel_asset != _auto_asset
+        if st.button("◈ MODELL AKTIVIEREN", type="primary", use_container_width=True):
+            with st.spinner("Modell wird geladen..."):
+                try:
+                    _payload = {"filename": _selected_model}
+                    if _needs_override or not _parsed:
+                        _payload["version"] = _sel_version
+                        _payload["asset"] = _sel_asset
+                    _resp = httpx.post(
+                        f"{BOT_API_URL}/api/models/select",
+                        json=_payload, timeout=30,
+                    )
+                    if _resp.status_code == 200:
+                        _result = _resp.json()
+                        st.success(
+                            f"Modell aktiviert: {_result.get('model_file')} "
+                            f"(v{_result.get('version', '?')}, {_result.get('asset', '?')})"
+                        )
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error(f"Fehler: {_resp.text}")
+                except Exception as e:
+                    st.error(f"API-Fehler: {e}")
+
+st.markdown("---")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # KPI ROW
 # ══════════════════════════════════════════════════════════════════════════════
 

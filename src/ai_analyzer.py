@@ -1,15 +1,21 @@
 """DQN-basierte Marktanalyse – ersetzt die Claude-API komplett.
 
-Lädt das neueste .pt-Modell aus dem models/-Ordner und führt
+Lädt ein .pt-Modell aus dem models/-Ordner und führt
 Inferenz für alle Watchlist-Assets durch. Das Interface
 (AnalysisResult) bleibt identisch zum alten MarketAnalyzer.
 
+Unterstützt mehrere Modellversionen (v1, v2) mit unterschiedlichen
+Architekturen. Die Version wird aus dem Dateinamen geparst
+(z.B. GOLD_v1_run1.pt) oder kann manuell gesetzt werden.
+
 State-Vektor wird aus der price_history-Tabelle (simulation.db)
-gebaut – identisch zum Training in TradeAI/predict.py.
+gebaut – identisch zum Training in TradeAI.
 """
 import glob
 import logging
 import os
+import re
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Optional
 
@@ -34,56 +40,206 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
-# ── Konstanten (identisch zu TradeAI/rl_agent/environment.py) ─────────────────
-MAX_WINDOW = 100
+# ── Assets ────────────────────────────────────────────────────────────────────
 ASSETS = ["GOLD", "SILVER", "OIL_CRUDE", "NATURALGAS"]
 ASSET_INDEX = {a: i for i, a in enumerate(ASSETS)}
-STATE_SIZE = MAX_WINDOW * 5 + 4 + 4 + 4  # 512
-ACTION_SIZE = 4
-ACTIONS = {0: "HOLD", 1: "BUY", 2: "SELL", 3: "CLOSE"}
 
 
-# ── Modell-Architektur (identisch zu TradeAI/rl_agent/model.py) ───────────────
+# ── Modellversions-Konfiguration ──────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class ModelVersionConfig:
+    """Alle architektur-relevanten Parameter einer Modellversion."""
+    version: str
+    max_window: int
+    n_indicators: int
+    action_size: int
+    actions: dict[int, str]
+    state_size: int
+    context_size: int          # n_indicators + 4 (asset) + 4 (position)
+    dropout: float
+    cnn_layers: int            # 3 oder 4
+    cnn_pool_size: int         # AdaptiveAvgPool1d output
+    sl_pct: float
+    tp_pct: float
+    # Action-Mapping auf den einheitlichen Bot-Standard (HOLD/BUY/SELL/CLOSE)
+    action_map: dict[int, str] = field(default_factory=dict)
+    # Position-Encoding: "r_multiple" (v2) oder "pct" (v1)
+    position_encoding: str = "r_multiple"
+
+
+MODEL_VERSIONS: dict[str, ModelVersionConfig] = {
+    "v1": ModelVersionConfig(
+        version="v1",
+        max_window=100,
+        n_indicators=4,
+        action_size=3,
+        actions={0: "BUY", 1: "SELL", 2: "CANCEL"},
+        state_size=512,
+        context_size=12,       # 4 + 4 + 4
+        dropout=0.0,
+        cnn_layers=4,
+        cnn_pool_size=8,
+        sl_pct=0.003,
+        tp_pct=0.005,
+        action_map={0: "BUY", 1: "SELL", 2: "CLOSE"},
+        position_encoding="pct",
+    ),
+    "v2": ModelVersionConfig(
+        version="v2",
+        max_window=50,
+        n_indicators=6,
+        action_size=4,
+        actions={0: "HOLD", 1: "BUY", 2: "SELL", 3: "CLOSE"},
+        state_size=264,
+        context_size=14,       # 6 + 4 + 4
+        dropout=0.15,
+        cnn_layers=3,
+        cnn_pool_size=4,
+        sl_pct=0.003,
+        tp_pct=0.005,
+        action_map={0: "HOLD", 1: "BUY", 2: "SELL", 3: "CLOSE"},
+        position_encoding="r_multiple",
+    ),
+}
+
+# Einheitliche Aktionen für den Bot (unabhängig von Modellversion)
+BOT_ACTIONS = {0: "HOLD", 1: "BUY", 2: "SELL", 3: "CLOSE"}
+
+
+# ── Dateinamen-Parser ─────────────────────────────────────────────────────────
+
+# Patterns: GOLD_v1_run1.pt, GOLD_dqn_v1.pt, GOLD_v2_run3.pt
+_FILENAME_PATTERNS = [
+    re.compile(r"^(?P<asset>[A-Z_]+)_v(?P<version>\d+)_run\d+\.pt$"),
+    re.compile(r"^(?P<asset>[A-Z_]+)_dqn_v\d+\.pt$"),      # v1-Stil aus TradeAI
+    re.compile(r"^(?P<asset>[A-Z_]+)_v(?P<version>\d+)\.pt$"),
+]
+
+
+def parse_model_filename(filename: str) -> dict[str, str | None]:
+    """Parst Asset und Version aus dem Modell-Dateinamen.
+
+    Returns:
+        {"asset": "GOLD"|None, "version": "v1"|None, "parsed": True|False}
+    """
+    basename = os.path.basename(filename)
+    for pat in _FILENAME_PATTERNS:
+        m = pat.match(basename)
+        if m:
+            groups = m.groupdict()
+            asset = groups.get("asset")
+            ver_num = groups.get("version")
+            # v1-Stil: GOLD_dqn_v1.pt → version immer v1
+            if ver_num is None and "_dqn_" in basename:
+                ver_num = "1"
+            version = f"v{ver_num}" if ver_num else None
+            return {"asset": asset, "version": version, "parsed": True}
+    return {"asset": None, "version": None, "parsed": False}
+
+
+def get_model_version_config(version: str) -> ModelVersionConfig:
+    """Gibt die Konfiguration für eine Modellversion zurück."""
+    if version not in MODEL_VERSIONS:
+        raise ValueError(
+            f"Unbekannte Modellversion '{version}'. "
+            f"Verfügbar: {list(MODEL_VERSIONS.keys())}"
+        )
+    return MODEL_VERSIONS[version]
+
+
+def list_available_models(models_dir: str | None = None) -> list[dict]:
+    """Listet alle .pt-Modelle mit geparsten Infos auf."""
+    d = models_dir or config.AI_MODELS_DIR
+    candidates = glob.glob(os.path.join(d, "*.pt"))
+    result = []
+    for path in sorted(candidates, key=os.path.getmtime, reverse=True):
+        info = parse_model_filename(path)
+        info["filename"] = os.path.basename(path)
+        info["path"] = path
+        info["size_mb"] = round(os.path.getsize(path) / 1024 / 1024, 1)
+        result.append(info)
+    return result
+
+
+# ── Modell-Architektur (parametrisiert fuer v1/v2) ───────────────────────────
+
+def _build_cnn_v1() -> torch.nn.Sequential:
+    """CNN fuer v1: 4 Layer, 100 Candles → 128×8 = 1024."""
+    return torch.nn.Sequential(
+        torch.nn.Conv1d(5, 32, kernel_size=7, stride=2, padding=3),
+        torch.nn.ReLU(),
+        torch.nn.Conv1d(32, 64, kernel_size=5, stride=2, padding=2),
+        torch.nn.ReLU(),
+        torch.nn.Conv1d(64, 128, kernel_size=5, stride=2, padding=2),
+        torch.nn.ReLU(),
+        torch.nn.Conv1d(128, 128, kernel_size=3, stride=2, padding=1),
+        torch.nn.ReLU(),
+        torch.nn.AdaptiveAvgPool1d(8),
+    )
+
+
+def _build_cnn_v2() -> torch.nn.Sequential:
+    """CNN fuer v2: 3 Layer, 50 Candles → 128×4 = 512."""
+    return torch.nn.Sequential(
+        torch.nn.Conv1d(5, 32, kernel_size=5, stride=2, padding=2),
+        torch.nn.ReLU(),
+        torch.nn.Conv1d(32, 64, kernel_size=3, stride=2, padding=1),
+        torch.nn.ReLU(),
+        torch.nn.Conv1d(64, 128, kernel_size=3, stride=2, padding=1),
+        torch.nn.ReLU(),
+        torch.nn.AdaptiveAvgPool1d(4),
+    )
+
 
 class DuelingDQN(torch.nn.Module):
-    CONTEXT_SIZE = 4 + 4 + 4  # indicators + asset-one-hot + position = 12
+    """Dueling DQN – unterstuetzt v1 und v2 Architektur."""
 
-    def __init__(self, action_size: int = ACTION_SIZE):
+    def __init__(self, vcfg: ModelVersionConfig):
         super().__init__()
-        self.cnn = torch.nn.Sequential(
-            torch.nn.Conv1d(5, 32, kernel_size=7, stride=2, padding=3),
-            torch.nn.ReLU(),
-            torch.nn.Conv1d(32, 64, kernel_size=5, stride=2, padding=2),
-            torch.nn.ReLU(),
-            torch.nn.Conv1d(64, 128, kernel_size=5, stride=2, padding=2),
-            torch.nn.ReLU(),
-            torch.nn.Conv1d(128, 128, kernel_size=3, stride=2, padding=1),
-            torch.nn.ReLU(),
-            torch.nn.AdaptiveAvgPool1d(8),
-        )
-        cnn_out = 128 * 8
-        shared_in = cnn_out + self.CONTEXT_SIZE
-        self.shared = torch.nn.Sequential(
+        self._max_window = vcfg.max_window
+        self._context_size = vcfg.context_size
+
+        # CNN je nach Version
+        if vcfg.cnn_layers == 4:
+            self.cnn = _build_cnn_v1()
+            cnn_out = 128 * vcfg.cnn_pool_size  # 1024
+        else:
+            self.cnn = _build_cnn_v2()
+            cnn_out = 128 * vcfg.cnn_pool_size  # 512
+
+        # Shared FC (mit optionalem Dropout fuer v2)
+        shared_in = cnn_out + vcfg.context_size
+        layers: list[torch.nn.Module] = [
             torch.nn.Linear(shared_in, 512),
             torch.nn.LayerNorm(512),
             torch.nn.ReLU(),
+        ]
+        if vcfg.dropout > 0:
+            layers.append(torch.nn.Dropout(vcfg.dropout))
+        layers += [
             torch.nn.Linear(512, 256),
             torch.nn.LayerNorm(256),
             torch.nn.ReLU(),
-        )
+        ]
+        if vcfg.dropout > 0:
+            layers.append(torch.nn.Dropout(vcfg.dropout))
+        self.shared = torch.nn.Sequential(*layers)
+
+        # Dueling Streams
         self.value_stream = torch.nn.Sequential(
             torch.nn.Linear(256, 128), torch.nn.ReLU(),
             torch.nn.Linear(128, 1),
         )
         self.advantage_stream = torch.nn.Sequential(
             torch.nn.Linear(256, 128), torch.nn.ReLU(),
-            torch.nn.Linear(128, action_size),
+            torch.nn.Linear(128, vcfg.action_size),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        candles = x[:, : MAX_WINDOW * 5].view(-1, MAX_WINDOW, 5)
+        candles = x[:, : self._max_window * 5].view(-1, self._max_window, 5)
         candles = candles.permute(0, 2, 1)
-        context = x[:, MAX_WINDOW * 5:]
+        context = x[:, self._max_window * 5:]
         cnn_out = self.cnn(candles).flatten(1)
         feat = self.shared(torch.cat([cnn_out, context], dim=1))
         value = self.value_stream(feat)
@@ -122,6 +278,39 @@ def _ema(closes: np.ndarray, period: int) -> float:
     for p in closes[1:]:
         e = p * k + e * (1 - k)
     return float(e)
+
+
+def _macd_histogram(closes: np.ndarray) -> float:
+    """MACD-Histogramm (EMA12 - EMA26 - Signal9), normiert durch Preis."""
+    if len(closes) < 27:
+        return 0.0
+    ema12 = _ema(closes, 12)
+    ema26 = _ema(closes, 26)
+    macd_line = ema12 - ema26
+    # Signal: EMA9 der MACD-Linie (Approximation mit den letzten 35 Werten)
+    n = min(len(closes), 35)
+    macd_vals = []
+    for i in range(n):
+        e12 = _ema(closes[:len(closes) - n + i + 1], 12)
+        e26 = _ema(closes[:len(closes) - n + i + 1], 26)
+        macd_vals.append(e12 - e26)
+    signal = macd_vals[0]
+    k9 = 2.0 / 10.0
+    for v in macd_vals[1:]:
+        signal = v * k9 + signal * (1.0 - k9)
+    ref = closes[-1] + 1e-8
+    return float(np.clip((macd_line - signal) / ref, -0.01, 0.01) / 0.01)
+
+
+def _bollinger_width(closes: np.ndarray, period: int = 20) -> float:
+    """Relative Bollinger-Bandbreite (2*std / SMA), normiert auf [0, 1]."""
+    if len(closes) < period:
+        return 0.0
+    window = closes[-period:]
+    sma = float(window.mean())
+    std = float(window.std())
+    raw = (2.0 * std) / (sma + 1e-8)
+    return float(np.clip(raw, 0, 0.1) / 0.1)
 
 
 def _scale_confidence(softmax_conf: float) -> int:
@@ -221,13 +410,23 @@ def _get_latest_model_path(models_dir: str) -> str:
 # ── DQN Analyzer ──────────────────────────────────────────────────────────────
 
 class DQNAnalyzer:
-    """Ersetzt MarketAnalyzer – nutzt das eigene DQN-Modell statt Claude API."""
+    """Ersetzt MarketAnalyzer – nutzt das eigene DQN-Modell statt Claude API.
+
+    Unterstuetzt v1 und v2 Modelle. Die Version wird aus dem Dateinamen
+    geparst oder kann manuell gesetzt werden.
+    """
 
     def __init__(self, models_dir: str | None = None) -> None:
         self._models_dir = models_dir or config.AI_MODELS_DIR
         self._device = self._resolve_device()
         self._net: DuelingDQN | None = None
         self._model_path: str | None = None
+        self._vcfg: ModelVersionConfig = MODEL_VERSIONS["v1"]  # Default
+
+        # Manuelle Overrides (None = auto-detect aus Dateinamen)
+        self._override_version: str | None = None
+        self._override_asset: str | None = None
+        self._override_model_file: str | None = None
 
     @staticmethod
     def _resolve_device() -> torch.device:
@@ -235,15 +434,193 @@ class DQNAnalyzer:
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.device(config.DQN_DEVICE)
 
+    # ── Modellauswahl ─────────────────────────────────────────────────────
+
+    def select_model(
+        self,
+        filename: str | None = None,
+        version: str | None = None,
+        asset: str | None = None,
+    ) -> dict:
+        """Modell auswaehlen. Gibt geparste Infos zurueck.
+
+        Args:
+            filename: Konkreter Dateiname (z.B. "GOLD_v1_run1.pt").
+                      Wenn None, wird das neueste .pt verwendet.
+            version:  Manuelle Version (z.B. "v1", "v2").
+                      Ueberschreibt auto-detect aus Dateinamen.
+            asset:    Manuelles Asset (z.B. "GOLD").
+                      Ueberschreibt auto-detect aus Dateinamen.
+
+        Returns:
+            Dict mit model_file, version, asset, parsed, auto_detected.
+        """
+        self._override_model_file = filename
+        self._override_version = version
+        self._override_asset = asset
+        # Cache invalidieren → naechster _load_model() laedt neu
+        self._net = None
+        self._model_path = None
+
+        # Info-Dict aufbauen
+        model_path = self._resolve_model_path()
+        info = parse_model_filename(model_path)
+        effective_version = version or info.get("version") or "v1"
+        effective_asset = asset or info.get("asset")
+
+        if effective_version in MODEL_VERSIONS:
+            self._vcfg = MODEL_VERSIONS[effective_version]
+        else:
+            logger.warning("Unbekannte Version '%s', fallback auf v1", effective_version)
+            self._vcfg = MODEL_VERSIONS["v1"]
+
+        result = {
+            "model_file": os.path.basename(model_path),
+            "version": effective_version,
+            "asset": effective_asset,
+            "parsed": info.get("parsed", False),
+            "auto_detected": version is None and asset is None,
+            "config": {
+                "max_window": self._vcfg.max_window,
+                "n_indicators": self._vcfg.n_indicators,
+                "action_size": self._vcfg.action_size,
+                "actions": self._vcfg.action_map,
+                "state_size": self._vcfg.state_size,
+                "sl_pct": self._vcfg.sl_pct,
+                "tp_pct": self._vcfg.tp_pct,
+            },
+        }
+        logger.info(
+            "Modell ausgewaehlt: %s (version=%s, asset=%s)",
+            result["model_file"], effective_version, effective_asset,
+        )
+        return result
+
+    def get_current_model_info(self) -> dict:
+        """Gibt Infos zum aktuell geladenen/ausgewaehlten Modell zurueck."""
+        path = self._resolve_model_path()
+        info = parse_model_filename(path)
+        return {
+            "model_file": os.path.basename(path),
+            "version": self._vcfg.version,
+            "asset": self._override_asset or info.get("asset"),
+            "config": {
+                "max_window": self._vcfg.max_window,
+                "n_indicators": self._vcfg.n_indicators,
+                "action_size": self._vcfg.action_size,
+                "actions": self._vcfg.action_map,
+                "state_size": self._vcfg.state_size,
+                "sl_pct": self._vcfg.sl_pct,
+                "tp_pct": self._vcfg.tp_pct,
+            },
+        }
+
+    @staticmethod
+    def _detect_version_from_checkpoint(sd: dict) -> str | None:
+        """Erkennt die Modellversion anhand der Checkpoint-Gewichte.
+
+        v1: 4 CNN-Layer (cnn.6.weight existiert), shared_in=1036
+        v2: 3 CNN-Layer (kein cnn.6.weight), shared_in=526
+        """
+        has_cnn6 = "cnn.6.weight" in sd
+        shared_in = sd.get("shared.0.weight")
+        if shared_in is None:
+            return None
+        shared_width = shared_in.shape[1]
+
+        if has_cnn6 and shared_width >= 1024:
+            return "v1"
+        if not has_cnn6 and shared_width < 1024:
+            return "v2"
+        # Ambig – anhand CNN-Kernel-Groesse unterscheiden
+        cnn0 = sd.get("cnn.0.weight")
+        if cnn0 is not None:
+            kernel = cnn0.shape[2]
+            if kernel == 7:
+                return "v1"
+            if kernel == 5:
+                return "v2"
+        return None
+
+    def _resolve_model_path(self) -> str:
+        """Bestimmt den Modellpfad (Override oder neueste Datei)."""
+        if self._override_model_file:
+            path = os.path.join(self._models_dir, self._override_model_file)
+            if os.path.isfile(path):
+                return path
+            # Eventuell absoluter Pfad
+            if os.path.isfile(self._override_model_file):
+                return self._override_model_file
+            logger.warning(
+                "Override-Modell '%s' nicht gefunden, fallback auf neuestes",
+                self._override_model_file,
+            )
+        return _get_latest_model_path(self._models_dir)
+
     def _load_model(self) -> DuelingDQN:
-        """Lädt das neueste Modell (cached, reload bei neuerem .pt)."""
-        latest = _get_latest_model_path(self._models_dir)
+        """Laedt das Modell mit der korrekten Architektur (cached)."""
+        latest = self._resolve_model_path()
         if self._net is not None and self._model_path == latest:
             return self._net
 
-        logger.info("Lade DQN-Modell: %s (device=%s)", latest, self._device)
-        net = DuelingDQN(ACTION_SIZE).to(self._device)
+        # Version aus Dateinamen bestimmen (falls kein Override)
+        if self._override_version:
+            version = self._override_version
+        else:
+            info = parse_model_filename(latest)
+            version = info.get("version") or "v1"
+
+        if version in MODEL_VERSIONS:
+            self._vcfg = MODEL_VERSIONS[version]
+        else:
+            logger.warning("Unbekannte Version '%s', fallback auf v1", version)
+            self._vcfg = MODEL_VERSIONS["v1"]
+
+        logger.info(
+            "Lade DQN-Modell: %s (version=%s, device=%s, state=%d, actions=%d)",
+            latest, self._vcfg.version, self._device,
+            self._vcfg.state_size, self._vcfg.action_size,
+        )
         ckpt = torch.load(latest, map_location=self._device, weights_only=True)
+        sd = ckpt["policy_net"]
+
+        # ── Auto-detect Architektur aus Checkpoint ───────────────────────
+        detected_version = self._detect_version_from_checkpoint(sd)
+        if detected_version and detected_version != self._vcfg.version:
+            logger.warning(
+                "Checkpoint-Architektur ist '%s', nicht '%s' – korrigiere automatisch",
+                detected_version, self._vcfg.version,
+            )
+            self._vcfg = MODEL_VERSIONS[detected_version]
+
+        # Action-Size Feinabgleich (falls Checkpoint nicht exakt passt)
+        adv_key = "advantage_stream.2.weight"
+        if adv_key in sd:
+            ckpt_actions = sd[adv_key].shape[0]
+            if ckpt_actions != self._vcfg.action_size:
+                logger.warning(
+                    "Checkpoint hat %d Actions, Config erwartet %d – passe an",
+                    ckpt_actions, self._vcfg.action_size,
+                )
+                matching = [v for v in MODEL_VERSIONS.values() if v.action_size == ckpt_actions]
+                if matching:
+                    matched = matching[0]
+                    self._vcfg = replace(
+                        self._vcfg,
+                        action_size=ckpt_actions,
+                        action_map=matched.action_map,
+                        actions=matched.actions,
+                    )
+                else:
+                    generic_map = {i: f"ACTION_{i}" for i in range(ckpt_actions)}
+                    self._vcfg = replace(
+                        self._vcfg,
+                        action_size=ckpt_actions,
+                        action_map=generic_map,
+                        actions=generic_map,
+                    )
+
+        net = DuelingDQN(self._vcfg).to(self._device)
         net.load_state_dict(ckpt["policy_net"])
         net.eval()
         self._net = net
@@ -252,18 +629,21 @@ class DQNAnalyzer:
 
     # ── State-Vektor aus DB (identisch zu TradeAI/predict.py) ───────────────
 
-    @staticmethod
     async def _load_candles_from_db(
+        self,
         asset: str,
         before_timestamp: str | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Liest die letzten 100 Kerzen aus price_history (simulation.db).
+        """Liest Kerzen aus price_history (simulation.db).
+
+        Laedt genug Kerzen fuer Indikatoren (mind. 50 extra fuer EMA50/MACD).
 
         Args:
             asset: Asset-Key (z.B. "GOLD")
-            before_timestamp: Wenn gesetzt, nur Kerzen VOR diesem Zeitpunkt (ISO-Format).
-                              Fuer Backtest: Kerzen vor dem Trade-Entry laden.
+            before_timestamp: Wenn gesetzt, nur Kerzen VOR diesem Zeitpunkt.
         """
+        # Mehr laden als max_window, damit Indikatoren genug History haben
+        load_count = self._vcfg.max_window + 50
         async with aiosqlite.connect(config.SIM_DB_PATH) as db:
             if before_timestamp:
                 query = (
@@ -271,13 +651,13 @@ class DQNAnalyzer:
                     "WHERE asset = ? AND timestamp <= ? "
                     "ORDER BY timestamp DESC LIMIT ?"
                 )
-                params = (asset, before_timestamp, MAX_WINDOW)
+                params = (asset, before_timestamp, load_count)
             else:
                 query = (
                     "SELECT open, high, low, close FROM price_history "
                     "WHERE asset = ? ORDER BY timestamp DESC LIMIT ?"
                 )
-                params = (asset, MAX_WINDOW)
+                params = (asset, load_count)
             async with db.execute(query, params) as cursor:
                 rows = await cursor.fetchall()
 
@@ -306,62 +686,91 @@ class DQNAnalyzer:
         closes: np.ndarray,
         open_position: PositionInfo | None = None,
     ) -> tuple[np.ndarray, float]:
-        """Baut den State-Vektor aus numpy-Arrays (DB oder PriceBar)."""
-        avail = len(closes)
-        ohlcv = np.zeros((MAX_WINDOW, 5), dtype=np.float32)
+        """Baut den State-Vektor aus numpy-Arrays (DB oder PriceBar).
+
+        Versionsbewusst: v1 = 512 dim, v2 = 264 dim.
+        """
+        vcfg = self._vcfg
+        max_window = vcfg.max_window
+        avail = min(len(closes), max_window)
+        ohlcv = np.zeros((max_window, 5), dtype=np.float32)
         current_price = 0.0
 
         if avail > 0:
-            # Volume ist in der DB immer 0 (Capital.com MINUTE hat kein Volume)
+            # Nur die letzten max_window Kerzen verwenden
+            o = opens[-avail:]
+            h = highs[-avail:]
+            l = lows[-avail:]
+            c = closes[-avail:]
             volumes = np.zeros(avail, dtype=np.float64)
 
-            current_price = float(closes[-1])
+            current_price = float(c[-1])
             ref = current_price
             v_mean = float(volumes.mean()) + 1e-8
 
             rows = np.column_stack([
-                opens / ref - 1,
-                highs / ref - 1,
-                lows / ref - 1,
-                closes / ref - 1,
+                o / ref - 1,
+                h / ref - 1,
+                l / ref - 1,
+                c / ref - 1,
                 volumes / v_mean - 1,
             ]).astype(np.float32)
-            ohlcv[MAX_WINDOW - avail:] = np.clip(rows, -5.0, 5.0)
+            ohlcv[max_window - avail:] = np.clip(rows, -5.0, 5.0)
 
-            # Indikatoren
+            # Basis-Indikatoren (v1 + v2)
             rsi = (_rsi(closes) - 50.0) / 50.0
             atr_val = _atr(highs, lows, closes)
             atr_pct = float(np.clip(atr_val / (closes[-1] + 1e-8), 0, 0.05) / 0.05)
             ema20_r = float(np.clip(
-                _ema(closes, min(20, avail)) / (closes[-1] + 1e-8) - 1, -0.1, 0.1,
+                _ema(closes, min(20, len(closes))) / (closes[-1] + 1e-8) - 1, -0.1, 0.1,
             ) / 0.1)
             ema50_r = float(np.clip(
-                _ema(closes, min(50, avail)) / (closes[-1] + 1e-8) - 1, -0.1, 0.1,
+                _ema(closes, min(50, len(closes))) / (closes[-1] + 1e-8) - 1, -0.1, 0.1,
             ) / 0.1)
-        else:
-            rsi, atr_pct, ema20_r, ema50_r = 0.0, 0.0, 0.0, 0.0
 
-        indicators = np.array([rsi, atr_pct, ema20_r, ema50_r], dtype=np.float32)
+            ind_list = [rsi, atr_pct, ema20_r, ema50_r]
+
+            # v2: zusaetzlich MACD und Bollinger Width
+            if vcfg.n_indicators >= 6:
+                ind_list.append(_macd_histogram(closes))
+                ind_list.append(_bollinger_width(closes))
+        else:
+            ind_list = [0.0] * vcfg.n_indicators
+
+        indicators = np.array(ind_list, dtype=np.float32)
 
         # Asset one-hot
         asset_oh = np.zeros(4, dtype=np.float32)
         asset_oh[ASSET_INDEX[asset]] = 1.0
 
-        # Position
+        # Position (Encoding je nach Version)
         if open_position is None:
             pos = np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32)
         else:
-            risk = open_position.entry_price * config.DQN_SL_PCT
+            sl_pct = vcfg.sl_pct
             if open_position.direction == Direction.BUY:
-                unreal_r = (current_price - open_position.entry_price) / risk
                 direction = 1.0
+                if vcfg.position_encoding == "pct":
+                    # v1: unrealised_pct = (price-entry)/entry * 100
+                    unreal = (current_price - open_position.entry_price) / (open_position.entry_price + 1e-8) * 100.0
+                    unreal = float(np.clip(unreal, -5, 5))
+                else:
+                    # v2: unrealised_r = PnL / SL-Distanz
+                    risk = open_position.entry_price * sl_pct
+                    unreal = float(np.clip(
+                        (current_price - open_position.entry_price) / (risk + 1e-8), -3, 3,
+                    ))
             else:
-                unreal_r = (open_position.entry_price - current_price) / risk
                 direction = -1.0
-            pos = np.array(
-                [1.0, direction, float(np.clip(unreal_r, -3, 3)), 0.0],
-                dtype=np.float32,
-            )
+                if vcfg.position_encoding == "pct":
+                    unreal = (open_position.entry_price - current_price) / (open_position.entry_price + 1e-8) * 100.0
+                    unreal = float(np.clip(unreal, -5, 5))
+                else:
+                    risk = open_position.entry_price * sl_pct
+                    unreal = float(np.clip(
+                        (open_position.entry_price - current_price) / (risk + 1e-8), -3, 3,
+                    ))
+            pos = np.array([1.0, direction, unreal, 0.0], dtype=np.float32)
 
         state = np.concatenate([ohlcv.flatten(), indicators, asset_oh, pos])
         return state, current_price
@@ -384,38 +793,54 @@ class DQNAnalyzer:
     # ── Inferenz ──────────────────────────────────────────────────────────────
 
     def _infer(self, state: np.ndarray, current_price: float, asset: str) -> dict:
-        """Fuehrt DQN-Inferenz auf einem fertigen State-Vektor aus."""
+        """Fuehrt DQN-Inferenz auf einem fertigen State-Vektor aus.
+
+        Mappt versionsspezifische Aktionen auf einheitliche Bot-Aktionen.
+        """
+        vcfg = self._vcfg
         net = self._load_model()
         state_t = torch.FloatTensor(state).unsqueeze(0).to(self._device)
         with torch.no_grad():
             q = net(state_t).squeeze(0).cpu().numpy()
 
-        action = int(q.argmax())
+        raw_action = int(q.argmax())
         softmax_conf = float(F.softmax(torch.FloatTensor(q), dim=0).max())
         confidence = _scale_confidence(softmax_conf)
 
-        # SL/TP fuer neuen Eintritt
+        # Action-Mapping: versionsspezifisch → einheitlich (HOLD/BUY/SELL/CLOSE)
+        bot_action = vcfg.action_map[raw_action]
+
+        # SL/TP fuer neuen Eintritt (aus Versions-Config)
+        sl_pct = vcfg.sl_pct
+        tp_pct = vcfg.tp_pct
         sl = tp = rr = None
-        if action == 1:  # BUY
-            sl = current_price * (1 - config.DQN_SL_PCT)
-            tp = current_price * (1 + config.DQN_TP_PCT)
-            rr = config.DQN_TP_PCT / config.DQN_SL_PCT
-        elif action == 2:  # SELL
-            sl = current_price * (1 + config.DQN_SL_PCT)
-            tp = current_price * (1 - config.DQN_TP_PCT)
-            rr = config.DQN_TP_PCT / config.DQN_SL_PCT
+        if bot_action == "BUY":
+            sl = current_price * (1 - sl_pct)
+            tp = current_price * (1 + tp_pct)
+            rr = tp_pct / sl_pct
+        elif bot_action == "SELL":
+            sl = current_price * (1 + sl_pct)
+            tp = current_price * (1 - tp_pct)
+            rr = tp_pct / sl_pct
+
+        # Q-Werte mit einheitlichen Action-Labels
+        q_labels = {}
+        for i in range(vcfg.action_size):
+            label = vcfg.action_map[i]
+            q_labels[label] = round(float(q[i]), 4)
 
         return {
             "asset": asset,
-            "action": ACTIONS[action],
-            "action_id": action,
+            "action": bot_action,
+            "action_id": raw_action,
             "current_price": current_price,
             "sl": sl,
             "tp": tp,
             "risk_reward_ratio": rr,
             "confidence": confidence,
             "softmax_confidence": softmax_conf,
-            "q_values": {ACTIONS[i]: round(float(q[i]), 4) for i in range(ACTION_SIZE)},
+            "q_values": q_labels,
+            "model_version": vcfg.version,
         }
 
     def _get_signal(
@@ -434,14 +859,18 @@ class DQNAnalyzer:
         open_position: PositionInfo | None = None,
     ) -> dict:
         """DQN-Inferenz fuer ein Asset (State aus price_history DB)."""
+        # _load_model() aufrufen um _vcfg sicher zu initialisieren
+        self._load_model()
         opens, highs, lows, closes = await self._load_candles_from_db(asset)
         if len(closes) == 0:
+            vcfg = self._vcfg
             return {
                 "asset": asset, "action": "HOLD", "action_id": 0,
                 "current_price": 0.0, "sl": None, "tp": None,
                 "risk_reward_ratio": None, "confidence": 1,
                 "softmax_confidence": 0.25,
-                "q_values": {ACTIONS[i]: 0.0 for i in range(ACTION_SIZE)},
+                "q_values": {vcfg.action_map[i]: 0.0 for i in range(vcfg.action_size)},
+                "model_version": vcfg.version,
             }
         state, current_price = self._build_state_from_arrays(
             asset, opens, highs, lows, closes, open_position,
