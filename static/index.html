@@ -585,7 +585,7 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
 
       <!-- Signale -->
       <div class="card mb14">
-        <div class="card-hd"><span class="card-title">Signale</span><span class="badge badge-d" id="trd-sig-ts">—</span></div>
+        <div class="card-hd"><span class="card-title">Signale</span><span class="badge badge-d" id="trd-sig-countdown" style="margin-left:8px;font-variant-numeric:tabular-nums;">—</span><span class="badge badge-d" id="trd-sig-ts" style="margin-left:6px;">—</span></div>
         <div id="trd-signals"><div class="empty">Klicke "Analyse" oben.</div></div>
       </div>
 
@@ -943,6 +943,7 @@ function nav(el) {
   if (page !== 'trading') {
     if (_trdPollInterval) { clearInterval(_trdPollInterval); _trdPollInterval = null; }
     if (_trdSignalSSE) { _trdSignalSSE.close(); _trdSignalSSE = null; }
+    if (_trdCountdownInterval) { clearInterval(_trdCountdownInterval); _trdCountdownInterval = null; }
   }
   if (page === 'trading') loadTradingPage();
   if (page === 'daten')  { loadDatenPage(); loadSimHistory(); }
@@ -1369,6 +1370,7 @@ async function triggerAnalyze(ctx) {
   try {
     const d = await apiFetch('/api/analyze', { method: 'POST' });
     _lastSignals = d.signals;
+    _trdLastSignalTs = Date.now();
     // Add checked_at for manual analyze
     const now = new Date().toISOString();
     d.signals.forEach(s => { if (!s.checked_at) s.checked_at = now; });
@@ -1395,6 +1397,21 @@ let _trdTradesShown = 0;
 const TRD_PAGE_SIZE = 50;
 let _trdPollInterval = null;
 let _trdSignalSSE = null;
+let _trdLastSignalTs = null;
+let _trdCountdownInterval = null;
+
+function startTrdCountdown() {
+  if (_trdCountdownInterval) clearInterval(_trdCountdownInterval);
+  _trdCountdownInterval = setInterval(() => {
+    const el = document.getElementById('trd-sig-countdown');
+    if (!el || !_trdLastSignalTs) { if (el) el.textContent = '—'; return; }
+    const elapsed = (Date.now() - _trdLastSignalTs) / 1000;
+    const remaining = Math.max(0, 60 - elapsed);
+    const secs = Math.ceil(remaining);
+    el.textContent = secs > 0 ? `${secs}s` : 'jetzt...';
+    el.style.color = secs <= 5 ? 'var(--yellow)' : '';
+  }, 250);
+}
 
 async function loadTradingPage() {
   updateTradingBotCard(botRunning);
@@ -1403,6 +1420,7 @@ async function loadTradingPage() {
   loadTrdActiveModel();
   await loadTrdSettings();
   connectTrdSignalSSE();
+  startTrdCountdown();
   loadTradingTrades();
   // Start polling every 30s (KPIs, positions — NOT signals)
   if (_trdPollInterval) clearInterval(_trdPollInterval);
@@ -1419,6 +1437,7 @@ function connectTrdSignalSSE() {
       // ── Signal-Update ──
       if (d.signals && d.signals.length) {
         _lastSignals = d.signals;
+        _trdLastSignalTs = Date.now();
         const trdAssets = getTrdActiveAssets();
         document.getElementById('trd-signals').innerHTML = trdSignalsHtml(d.signals, trdAssets);
         const latest = d.signals.reduce((max, s) => (s.checked_at || '') > max ? s.checked_at : max, '');
@@ -1459,17 +1478,22 @@ function handleTrdTradeUpdate(trades) {
     document.getElementById('trd-open-body').innerHTML = `
       <table class="tbl"><thead><tr>
         <th>Zeit</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
-        <th>SL</th><th>TP</th><th>Conf</th><th></th>
+        <th>SL</th><th>TP</th><th>P/L</th><th>Conf</th><th></th>
       </tr></thead><tbody>
-      ${open.map(t => `<tr>
+      ${open.map(t => {
+        const pl = t.profit_loss;
+        const plStr = pl != null ? (pl >= 0 ? '+' : '') + pl.toFixed(2) : '—';
+        const plColor = pl != null ? (pl >= 0 ? 'var(--green)' : 'var(--red)') : '';
+        return `<tr>
         <td>${ts2time(t.timestamp)}</td><td>${t.asset}</td>
         <td class="${t.direction==='BUY'?'cl':'cs'}">${t.direction==='BUY'?'▲ LONG':'▼ SHORT'}</td>
         <td>${t.entry_price?.toFixed(2)??'—'}</td>
         <td style="color:var(--red)">${t.stop_loss?.toFixed(2)??'—'}</td>
         <td style="color:var(--green)">${t.take_profit?.toFixed(2)??'—'}</td>
+        <td style="color:${plColor};font-weight:600">${plStr}</td>
         <td style="color:var(--yellow)">${t.confidence??'—'}/10</td>
         <td><button class="btn btn-danger btn-sm" onclick="closeTrdPosition('${t.deal_id}','${t.asset}')">Schliessen</button></td>
-      </tr>`).join('')}</tbody></table>`;
+      </tr>`;}).join('')}</tbody></table>`;
   }
 
   // ── Update trades list (open + closed) for chart ──
@@ -1677,18 +1701,23 @@ async function loadTradingTrades() {
       document.getElementById('trd-open-body').innerHTML = `
         <table class="tbl"><thead><tr>
           <th>Zeit</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
-          <th>SL</th><th>TP</th><th>Conf</th><th></th>
+          <th>SL</th><th>TP</th><th>P/L</th><th>Conf</th><th></th>
         </tr></thead><tbody>
-        ${open.map(t => `<tr>
+        ${open.map(t => {
+          const pl = t.profit_loss;
+          const plStr = pl != null ? (pl >= 0 ? '+' : '') + pl.toFixed(2) : '—';
+          const plColor = pl != null ? (pl >= 0 ? 'var(--green)' : 'var(--red)') : '';
+          return `<tr>
           <td>${ts2time(t.timestamp)}</td>
           <td>${t.asset}</td>
           <td class="${t.direction==='BUY'?'cl':'cs'}">${t.direction==='BUY'?'▲ LONG':'▼ SHORT'}</td>
           <td>${t.entry_price?.toFixed(2)??'—'}</td>
           <td style="color:var(--red)">${t.stop_loss?.toFixed(2)??'—'}</td>
           <td style="color:var(--green)">${t.take_profit?.toFixed(2)??'—'}</td>
+          <td style="color:${plColor};font-weight:600">${plStr}</td>
           <td style="color:var(--yellow)">${t.confidence??'—'}/10</td>
           <td><button class="btn btn-danger btn-sm" onclick="closeTrdPosition('${t.deal_id}','${t.asset}')">Schliessen</button></td>
-        </tr>`).join('')}
+        </tr>`;}).join('')}
         </tbody></table>`;
     }
 

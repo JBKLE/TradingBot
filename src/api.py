@@ -1529,6 +1529,22 @@ def create_api() -> FastAPI:
                 ) as cur:
                     async for row in cur:
                         rows.append(dict(row))
+
+            # Enrich open trades with live P/L from broker
+            open_rows = [r for r in rows if r.get("status") == "OPEN"]
+            if open_rows:
+                try:
+                    broker = await get_shared_broker()
+                    positions = await broker.get_open_positions()
+                    pos_by_deal = {p.deal_id: p for p in positions}
+                    for r in open_rows:
+                        p = pos_by_deal.get(r.get("deal_id"))
+                        if p:
+                            r["profit_loss"] = round(p.profit_loss, 2)
+                            r["current_price"] = p.current_price
+                except Exception:
+                    pass  # Fallback: profit_loss bleibt NULL
+
             return {"trades": rows, "total": len(rows)}
         except Exception as exc:
             raise HTTPException(500, str(exc))
