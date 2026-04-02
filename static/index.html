@@ -685,7 +685,10 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
       <!-- Sim Result -->
       <div class="g2 mb14" id="sim-result-row" style="display:none;">
         <div class="card">
-          <div class="card-hd"><span class="card-title">Ergebnis</span><span class="badge badge-d" id="sim-result-badge">—</span></div>
+          <div class="card-hd">
+            <span class="card-title">Ergebnis</span><span class="badge badge-d" id="sim-result-badge">—</span>
+            <button class="btn btn-primary btn-sm" id="sim-save-btn" style="display:none;margin-left:auto;" onclick="saveSimRun()">Speichern</button>
+          </div>
           <div id="sim-results"></div>
         </div>
         <div class="card" id="sim-fin-result-card" style="display:none;">
@@ -729,7 +732,7 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
           <span class="card-title">Simulationshistorie</span>
           <button class="btn btn-ghost btn-sm" onclick="loadSimHistory()">Aktualisieren</button>
         </div>
-        <div id="sim-history-body"><div class="empty">Klicke "Aktualisieren" um frühere Simulationen zu laden.</div></div>
+        <div id="sim-history-body"><div class="empty">Keine gespeicherten Simulationen.</div></div>
       </div>
 
       <hr class="div">
@@ -2224,10 +2227,16 @@ function closeTradeModal() {
   document.getElementById('sim-trade-modal').style.display = 'none';
 }
 
-function showSimResults(r) {
+let _simResultIsHistory = false; // true wenn aus Historie geladen
+
+function showSimResults(r, fromHistory) {
+  _simResultIsHistory = !!fromHistory;
   document.getElementById('sim-result-row').style.display = '';
+  const saveBtn = document.getElementById('sim-save-btn');
+  saveBtn.style.display = fromHistory ? 'none' : '';
   if (r.error) {
     document.getElementById('sim-results').innerHTML = `<div class="notif err">${r.error}</div>`;
+    saveBtn.style.display = 'none';
     return;
   }
   const wr = r.win_rate != null ? r.win_rate.toFixed(1) + '%' : '—';
@@ -2295,10 +2304,8 @@ function showSimResults(r) {
     renderSimChart();
 
     // Load asset price overlays asynchronously
-    const assets = r._history_meta?.assets?.length
-      ? r._history_meta.assets
-      : [...new Set(tl.map(t => t.asset))];
-    const inputDb = _simLastInputDb || null;
+    const assets = [...new Set(tl.map(t => t.asset))];
+    const inputDb = _simLastInputDb || document.getElementById('sim-input-db')?.value || null;
     if (inputDb) loadAssetCurves(inputDb, assets, tl, r.start_ts, r.end_ts);
   }
 
@@ -2374,6 +2381,22 @@ function loadMoreSimTrades() {
 }
 
 /* ─── SIMULATION HISTORY ──────────────────────────────────── */
+async function saveSimRun() {
+  const btn = document.getElementById('sim-save-btn');
+  btn.textContent = '...'; btn.disabled = true;
+  try {
+    const d = await apiFetch('/api/sim-history/save', { method: 'POST' });
+    if (d.error) { alert('Fehler: ' + d.error); return; }
+    addSimLog('ok', `Simulation gespeichert als #${d.id}`);
+    btn.style.display = 'none';
+    loadSimHistory();
+  } catch(e) {
+    alert('Speichern fehlgeschlagen: ' + e.message);
+  } finally {
+    btn.textContent = 'Speichern'; btn.disabled = false;
+  }
+}
+
 async function loadSimHistory() {
   const el = document.getElementById('sim-history-body');
   el.innerHTML = '<div class="loading-row"><div class="spinner"></div>Lade Historie...</div>';
@@ -2382,24 +2405,21 @@ async function loadSimHistory() {
     const runs = d.runs || [];
     if (!runs.length) { el.innerHTML = '<div class="empty">Keine Simulationen bisher.</div>'; return; }
     el.innerHTML = runs.map(r => {
-      const statusCls = r.status==='completed' ? 'badge-g' : r.status==='cancelled' ? 'badge-y' : 'badge-r';
-      const statusTxt = r.status==='completed' ? 'OK' : r.status==='cancelled' ? 'STOP' : 'ERR';
       const assets = (r.assets||[]).join(', ') || 'alle';
       const fin = r.start_capital != null
         ? `${eur(r.start_capital)} → ${eur(r.end_capital)} (${(r.total_return_pct||0).toFixed(1)}%)`
         : '';
-      const canLoad = r.status === 'completed' && r.trades > 0;
+      const pnl = r.total_pnl_points != null ? (r.total_pnl_points >= 0 ? '+' : '') + r.total_pnl_points.toFixed(2) + ' Pkt' : '';
       return `<div class="hist-row">
         <span class="hist-run-id">#${r.id}</span>
         <div class="hist-meta">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
-            <span class="badge ${statusCls}">${statusTxt}</span>
             <span style="font-size:12px;">${(r.run_at||'').slice(0,16)}</span>
             <span style="font-size:11px;color:var(--text-dim);">${r.model_name||''}</span>
           </div>
-          <div style="font-size:11px;color:var(--text-dim);">${assets} · Conf ≥ ${r.confidence_threshold||'—'} · ${r.trades||0} Trades · WR ${(r.win_rate||0).toFixed(1)}% ${fin?'· '+fin:''}</div>
+          <div style="font-size:11px;color:var(--text-dim);">${assets} · ${r.trades||0} Trades · WR ${(r.win_rate||0).toFixed(1)}% · ${pnl} ${fin?'· '+fin:''}</div>
         </div>
-        ${canLoad ? `<button class="btn btn-ghost btn-sm" onclick="loadSimRun(${r.id}, event)">Laden</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="loadSimRun(${r.id}, event)">Laden</button>
         <button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:var(--red);" onclick="deleteSimRun(${r.id}, event)" title="Löschen">✕</button>
       </div>`;
     }).join('');
@@ -2417,7 +2437,7 @@ async function loadSimRun(runId, evt) {
     if (d.error) { alert('Fehler: ' + d.error); return; }
     addSimLog('ok', `Historischen Run #${runId} geladen`);
     switchLog('sim');
-    showSimResults(d);
+    showSimResults(d, true);
   } catch(e) {
     alert('Laden fehlgeschlagen: ' + e.message);
   } finally {

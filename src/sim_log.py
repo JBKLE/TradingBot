@@ -1,16 +1,12 @@
-"""Simulation-Protokoll – speichert jeden Timeline-Sim-Run in sim_history.db.
+"""Simulation-Protokoll – speichert Timeline-Sim-Runs in sim_history.db.
 
-Schema sim_runs:
-  - Metadaten des Runs (Zeitstempel, Status, Dauer)
-  - Modell-Infos (Name, Pfad, Änderungsdatum)
-  - Einstellungen (Assets, Confidence, Kapital, Hebel …)
-  - Ergebnisse (Trades, WR, P/L, Drawdown …)
-  - Per-Asset-Breakdown (JSON)
+Jeder Run wird manuell gespeichert ("Speichern"-Button) und enthält das
+komplette Ergebnis-JSON (trade_list, financial, equity, per_asset) damit
+es 1:1 wieder geladen werden kann.
 """
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
 
 from . import config
 
@@ -27,37 +23,27 @@ CREATE TABLE IF NOT EXISTS sim_runs (
     -- Modell
     model_name           TEXT,
     model_path           TEXT,
-    model_modified_at    TEXT,
     -- Einstellungen
     assets               TEXT,          -- JSON-Array
     start_date           TEXT,
     end_date             TEXT,
     confidence_threshold INTEGER,
-    output_db            TEXT,
     -- Finanzparameter (NULL = nicht aktiv)
     capital              REAL,
     risk_pct             REAL,
     leverage             INTEGER,
     sl_pct               REAL,
     tp_pct               REAL,
-    -- Simulationsergebnisse
-    total_minutes        INTEGER,
+    -- Kurzuebersicht (fuer Historie-Liste)
     trades               INTEGER,
-    wins                 INTEGER,
-    losses               INTEGER,
     win_rate             REAL,
     total_pnl_points     REAL,
-    avg_r_multiple       REAL,
-    -- Finanzergebnisse (NULL = nicht aktiv)
     start_capital        REAL,
     end_capital          REAL,
     total_return_pct     REAL,
     max_drawdown_pct     REAL,
-    margin_call          INTEGER,
-    -- Per-Asset-Breakdown (JSON)
-    per_asset            TEXT,
-    -- Fehlermeldung
-    error_message        TEXT
+    -- Vollstaendiges Ergebnis
+    result_json          TEXT
 )
 """
 
@@ -66,13 +52,11 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(SIM_HISTORY_DB, timeout=10)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(_CREATE_SQL)
-    # Migration: neue Spalten sl_pct/tp_pct hinzufügen falls fehlend
+    # Migration: result_json hinzufuegen falls fehlend (alte DB)
     existing = {row[1] for row in conn.execute("PRAGMA table_info(sim_runs)").fetchall()}
-    if "sl_pct" not in existing:
-        conn.execute("ALTER TABLE sim_runs ADD COLUMN sl_pct REAL")
-    if "tp_pct" not in existing:
-        conn.execute("ALTER TABLE sim_runs ADD COLUMN tp_pct REAL")
-    conn.commit()
+    if "result_json" not in existing:
+        conn.execute("ALTER TABLE sim_runs ADD COLUMN result_json TEXT")
+        conn.commit()
     return conn
 
 
@@ -82,67 +66,50 @@ def save_run(
     finished_at: str,
     duration_sec: float,
     status: str,
-    # Modell
     model_name: str = "",
     model_path: str = "",
-    model_modified_at: str = "",
-    # Einstellungen
     assets: list[str] | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
-    confidence_threshold: int = 8,
-    output_db: str = "",
+    confidence_threshold: int = 1,
     capital: float | None = None,
     risk_pct: float | None = None,
     leverage: int | None = None,
-    sl_pct: float = 0.003,
-    tp_pct: float = 0.005,
-    # Ergebnisse
-    total_minutes: int = 0,
+    sl_pct: float | None = None,
+    tp_pct: float | None = None,
     trades: int = 0,
-    wins: int = 0,
-    losses: int = 0,
     win_rate: float = 0.0,
     total_pnl_points: float = 0.0,
-    avg_r_multiple: float = 0.0,
     start_capital: float | None = None,
     end_capital: float | None = None,
     total_return_pct: float | None = None,
     max_drawdown_pct: float | None = None,
-    margin_call: bool = False,
-    per_asset: dict | None = None,
-    error_message: str = "",
+    result_json: str = "",
 ) -> int:
-    """Einen Simulation-Run in sim_history.db speichern. Gibt die neue ID zurück."""
+    """Einen Simulation-Run speichern. Gibt die neue ID zurueck."""
     conn = _connect()
     cur = conn.execute(
         """INSERT INTO sim_runs (
             run_at, finished_at, duration_sec, status,
-            model_name, model_path, model_modified_at,
-            assets, start_date, end_date, confidence_threshold, output_db,
+            model_name, model_path,
+            assets, start_date, end_date, confidence_threshold,
             capital, risk_pct, leverage, sl_pct, tp_pct,
-            total_minutes, trades, wins, losses, win_rate,
-            total_pnl_points, avg_r_multiple,
+            trades, win_rate, total_pnl_points,
             start_capital, end_capital, total_return_pct, max_drawdown_pct,
-            margin_call, per_asset, error_message
+            result_json
         ) VALUES (
-            ?,?,?,?,  ?,?,?,  ?,?,?,?,?,  ?,?,?,?,
-            ?,?,?,?,?,  ?,?,  ?,?,?,?,  ?,?,?
+            ?,?,?,?, ?,?, ?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?, ?
         )""",
         (
             run_at, finished_at, round(duration_sec, 1), status,
-            model_name, model_path, model_modified_at,
-            json.dumps(assets or []), start_date, end_date,
-            confidence_threshold, output_db,
+            model_name, model_path,
+            json.dumps(assets or []), start_date, end_date, confidence_threshold,
             capital, risk_pct, leverage, sl_pct, tp_pct,
-            total_minutes, trades, wins, losses, round(win_rate, 2),
-            round(total_pnl_points, 4), round(avg_r_multiple, 4),
+            trades, round(win_rate, 2), round(total_pnl_points, 4),
             start_capital, end_capital,
             round(total_return_pct, 2) if total_return_pct is not None else None,
             round(max_drawdown_pct, 2) if max_drawdown_pct is not None else None,
-            1 if margin_call else 0,
-            json.dumps(per_asset or {}),
-            error_message,
+            result_json,
         ),
     )
     conn.commit()
@@ -152,7 +119,7 @@ def save_run(
 
 
 def delete_run(run_id: int) -> bool:
-    """Einen Run anhand seiner ID aus sim_history.db löschen."""
+    """Einen Run anhand seiner ID loeschen."""
     try:
         conn = _connect()
         cur = conn.execute("DELETE FROM sim_runs WHERE id = ?", (run_id,))
@@ -165,14 +132,26 @@ def delete_run(run_id: int) -> bool:
 
 
 def load_runs(limit: int = 50) -> list[dict]:
-    """Letzte N Runs laden (neueste zuerst)."""
+    """Letzte N Runs laden (neueste zuerst). Ohne result_json (zu gross)."""
     try:
         conn = _connect()
         rows = conn.execute(
-            "SELECT * FROM sim_runs ORDER BY id DESC LIMIT ?", (limit,)
+            """SELECT id, run_at, finished_at, duration_sec, status,
+                      model_name, assets, start_date, end_date,
+                      confidence_threshold, capital, sl_pct, tp_pct,
+                      trades, win_rate, total_pnl_points,
+                      start_capital, end_capital, total_return_pct, max_drawdown_pct
+               FROM sim_runs ORDER BY id DESC LIMIT ?""",
+            (limit,),
         ).fetchall()
-        cols = [d[0] for d in conn.execute("SELECT * FROM sim_runs LIMIT 0").description]
         conn.close()
+        cols = [
+            "id", "run_at", "finished_at", "duration_sec", "status",
+            "model_name", "assets", "start_date", "end_date",
+            "confidence_threshold", "capital", "sl_pct", "tp_pct",
+            "trades", "win_rate", "total_pnl_points",
+            "start_capital", "end_capital", "total_return_pct", "max_drawdown_pct",
+        ]
         result = []
         for row in rows:
             d = dict(zip(cols, row))
@@ -180,11 +159,22 @@ def load_runs(limit: int = 50) -> list[dict]:
                 d["assets"] = json.loads(d["assets"] or "[]")
             except Exception:
                 d["assets"] = []
-            try:
-                d["per_asset"] = json.loads(d["per_asset"] or "{}")
-            except Exception:
-                d["per_asset"] = {}
             result.append(d)
         return result
     except Exception:
         return []
+
+
+def load_run_result(run_id: int) -> dict | None:
+    """Vollstaendiges Ergebnis-JSON eines Runs laden."""
+    try:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT result_json FROM sim_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        conn.close()
+        if row and row[0]:
+            return json.loads(row[0])
+        return None
+    except Exception:
+        return None
