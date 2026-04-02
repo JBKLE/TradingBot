@@ -256,7 +256,9 @@ class TimelineSimulator:
                     exit_price      REAL,
                     status          TEXT,
                     pnl             REAL,
-                    r_multiple      REAL
+                    r_multiple      REAL,
+                    confidence      REAL,
+                    close_confidence REAL
                 )
             """)
             await db.execute("DELETE FROM sim_trades WHERE sl_variant = 'dqn_timeline'")
@@ -426,10 +428,23 @@ class TimelineSimulator:
                         if fin_enabled and running_capital <= 0:
                             margin_call = True
 
-                # Queue for inference (only if no open trade + enough history)
-                if asset not in open_trades and ci >= self._vcfg.max_window:
+                # Queue for inference (auch bei offener Position – Modell kann CLOSE entscheiden)
+                if ci >= self._vcfg.max_window:
                     window = candles[ci - self._vcfg.max_window + 1: ci + 1]
-                    states_to_infer.append((asset, window, c_close))
+                    # Position-Info fuer den State
+                    has_pos = asset in open_trades
+                    pos_dir = 0.0
+                    unreal  = 0.0
+                    if has_pos:
+                        tr = open_trades[asset]
+                        pos_dir = 1.0 if tr["direction"] == "BUY" else -1.0
+                        if self._vcfg.position_encoding == "pct":
+                            unreal = (c_close - tr["entry_price"]) / (tr["entry_price"] + 1e-8) * 100.0 * pos_dir
+                        else:
+                            risk = abs(tr["entry_price"] - tr["sl_price"])
+                            raw = (c_close - tr["entry_price"]) * pos_dir
+                            unreal = raw / (risk + 1e-8)
+                    states_to_infer.append((asset, window, c_close, has_pos, pos_dir, unreal))
 
             if margin_call:
                 logger.info("Margin call at minute %d — capital: %.2f EUR", minute_idx, running_capital)
@@ -437,13 +452,65 @@ class TimelineSimulator:
 
             # ── Batch inference for all queued assets ─────────────────────
             if states_to_infer:
-                states  = [self._build_state(a, w) for a, w, _ in states_to_infer]
+                states = [
+                    self._build_state(a, w, has_position=hp, position_dir=pd, unrealised_r=ur)
+                    for a, w, _, hp, pd, ur in states_to_infer
+                ]
                 results = self._infer_batch(states)
 
-                for (asset, _w, c_close), (action_id, softmax_conf) in zip(states_to_infer, results):
+                for (asset, _w, c_close, has_pos, _pd, _ur), (action_id, softmax_conf) in zip(states_to_infer, results):
                     confidence = _scale_confidence(softmax_conf)
                     bot_action = self._vcfg.action_map.get(action_id, "HOLD")
-                    if bot_action in ("BUY", "SELL") and confidence >= self.confidence_threshold:
+
+                    # ── CLOSE: offene Position am Markt schliessen ───────
+                    if bot_action == "CLOSE" and asset in open_trades:
+                        tr  = open_trades[asset]
+                        buy = tr["direction"] == "BUY"
+                        pnl  = (c_close - tr["entry_price"]) if buy else (tr["entry_price"] - c_close)
+                        risk = abs(tr["entry_price"] - tr["sl_price"])
+                        r_mult = pnl / risk if risk > 0 else 0.0
+
+                        fin_close: dict | None = None
+                        if fin_enabled:
+                            fin_close = calculate_trade_financials(
+                                asset=asset,
+                                direction=tr["direction"],
+                                entry_price=tr["entry_price"],
+                                exit_pnl=pnl,
+                                sl_price=tr["sl_price"],
+                                capital=running_capital,
+                                risk_pct=risk_pct,
+                                leverage=leverage,
+                            )
+                            running_capital += fin_close["netto_pnl_eur"]
+                            self.current_capital = running_capital
+                            equity_curve.append(running_capital)
+                            if running_capital > peak_capital:
+                                peak_capital = running_capital
+                            dd = (peak_capital - running_capital) / peak_capital * 100 if peak_capital > 0 else 0
+                            if dd > max_drawdown:
+                                max_drawdown = dd
+
+                        tr.update({
+                            "exit_timestamp":   current_ts,
+                            "exit_price":       c_close,
+                            "status":           "closed_dqn",
+                            "pnl":              pnl,
+                            "r_multiple":       r_mult,
+                            "close_confidence": confidence,
+                            "financial":        fin_close,
+                            "capital_after":    running_capital if fin_enabled else None,
+                        })
+                        closed_trades.append(tr)
+                        pending_save.append(tr)
+                        del open_trades[asset]
+
+                        if fin_enabled and running_capital <= 0:
+                            margin_call = True
+                        continue
+
+                    # ── BUY/SELL: neuen Trade eroeffnen (nur wenn flat) ──
+                    if bot_action in ("BUY", "SELL") and asset not in open_trades and confidence >= self.confidence_threshold:
                         direction = bot_action
                         trade_id += 1
                         sl = c_close * (1 - sl_pct) if direction == "BUY" else c_close * (1 + sl_pct)
@@ -560,6 +627,7 @@ class TimelineSimulator:
                 t.get("exit_timestamp"), t.get("exit_price"),
                 t.get("status", "closed_end"),
                 t.get("pnl"),         t.get("r_multiple"),
+                t.get("confidence"),  t.get("close_confidence"),
             )
             for t in trades
         ]
@@ -568,8 +636,9 @@ class TimelineSimulator:
         conn.executemany(
             """INSERT OR IGNORE INTO sim_trades
                (asset, direction, sl_variant, entry_timestamp, entry_price,
-                sl_price, tp_price, exit_timestamp, exit_price, status, pnl, r_multiple)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                sl_price, tp_price, exit_timestamp, exit_price, status, pnl, r_multiple,
+                confidence, close_confidence)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             rows,
         )
         conn.commit()
@@ -630,7 +699,8 @@ class TimelineSimulator:
                     "pnl":            round(t.get("pnl") or 0, 4),
                     "r_multiple":     round(t.get("r_multiple") or 0, 3),
                     "status":         t.get("status", ""),
-                    "confidence":     t.get("confidence", 0),
+                    "confidence":       t.get("confidence", 0),
+                    "close_confidence": t.get("close_confidence"),
                     "netto_pnl_eur":  round(t["financial"]["netto_pnl_eur"], 2) if t.get("financial") else None,
                     "capital_after":  round(t["capital_after"], 2) if t.get("capital_after") is not None else None,
                     "lot_size":       round(t["financial"]["lot_size"], 4) if t.get("financial") else None,

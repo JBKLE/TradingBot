@@ -2203,6 +2203,7 @@ function showTradeModal(id) {
     const pnlStr = pnl != null ? `${pnl >= 0 ? '+' : ''}${fmt4(pnl)}` : '—';
     rows.push(['P/L (Punkte)', pnlStr]);
     rows.push(['R-Multiple',   t.r_multiple != null ? Number(t.r_multiple).toFixed(3) + ' R' : '—']);
+    if (t.close_confidence != null) rows.push(['Close Conf', t.close_confidence + '/10']);
     rows.push(['Status',       statusMap[t.status] || t.status || '—']);
     if (t.capital_after != null) rows.push(['Kapital danach', eur(t.capital_after)]);
   }
@@ -2329,6 +2330,7 @@ function renderTradeTable(reset) {
     <td class="${(t.pnl||0)>=0?'pp':'pn'}">${t.pnl!=null?t.pnl.toFixed(4):'—'}</td>
     <td class="${(t.r_multiple||0)>=0?'pp':'pn'}">${t.r_multiple!=null?t.r_multiple.toFixed(2)+'R':'—'}</td>
     <td style="color:var(--yellow)">${t.confidence!=null?t.confidence+'/10':'—'}</td>
+    <td style="color:var(--cyan,#0ff)">${t.close_confidence!=null?t.close_confidence+'/10':'—'}</td>
     ${hasEur?`<td class="${(t.netto_pnl_eur||0)>=0?'pp':'pn'}">${eur(t.netto_pnl_eur)}</td>`:''}
     <td style="font-size:10px;color:var(--text-dim)">${t.status}</td>
   </tr>`;
@@ -2340,7 +2342,7 @@ function renderTradeTable(reset) {
         <div style="overflow-x:auto;">
           <table class="tbl"><thead><tr>
             <th>Datum/Zeit</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
-            <th>Ausstieg</th><th>PnL Pkt.</th><th>R</th><th>Conf</th>
+            <th>Ausstieg</th><th>PnL Pkt.</th><th>R</th><th>Conf</th><th>Close Conf</th>
             ${hasEur?'<th>Netto €</th>':''}
             <th>Status</th>
           </tr></thead><tbody id="sim-trades-tbody"></tbody></table>
