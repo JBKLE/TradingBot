@@ -102,6 +102,9 @@ ACCOUNT_BALANCE_LIMIT: float = float(os.getenv("ACCOUNT_BALANCE_LIMIT", "500.0")
 # Kill-switch – set TRADING_ENABLED=false to stop all trade execution
 TRADING_ENABLED: bool = os.getenv("TRADING_ENABLED", "false").lower() == "true"
 
+# Bot-aktive Assets (wird vom Dashboard-UI gesetzt)
+BOT_ACTIVE_ASSETS: list[str] | None = None  # None = alle
+
 # ── Watchlist – Capital.com epic codes ────────────────────────────────────────
 WATCHLIST: dict[str, dict[str, str]] = {
     "GOLD": {"epic": "GOLD", "name": "Gold", "category": "precious_metals"},

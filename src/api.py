@@ -1316,9 +1316,11 @@ def create_api() -> FastAPI:
         for k, v in body.items():
             if k in allowed:
                 _bot_settings[k] = v
-        # Sync min_confidence to config for live bot
+        # Sync to config for live bot
         if "min_confidence" in body:
             config.MIN_CONFIDENCE_SCORE = int(body["min_confidence"])
+        if "assets" in body:
+            config.BOT_ACTIVE_ASSETS = body["assets"] if len(body["assets"]) < 4 else None
         return _bot_settings
 
     @app.post("/api/bot/start")
@@ -1327,6 +1329,8 @@ def create_api() -> FastAPI:
         config.TRADING_ENABLED = True
         # Apply current settings to config
         config.MIN_CONFIDENCE_SCORE = int(_bot_settings.get("min_confidence", 8))
+        assets = _bot_settings.get("assets", [])
+        config.BOT_ACTIVE_ASSETS = assets if len(assets) < 4 else None
         logger.info(
             "Bot gestartet (via Dashboard) – Konfidenz: %s, Assets: %s, SL: %s%%, TP: %s%%",
             _bot_settings.get("min_confidence"),

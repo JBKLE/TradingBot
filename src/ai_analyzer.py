@@ -444,17 +444,24 @@ class DQNAnalyzer:
     geparst oder kann manuell gesetzt werden.
     """
 
+    # Klassenvariablen: persistieren zwischen Instanzen
+    _shared_override_model_file: str | None = None
+    _shared_override_version: str | None = None
+    _shared_override_asset: str | None = None
+    _shared_net: "DuelingDQN | None" = None
+    _shared_model_path: str | None = None
+    _shared_vcfg: ModelVersionConfig | None = None
+
     def __init__(self, models_dir: str | None = None) -> None:
         self._models_dir = models_dir or config.AI_MODELS_DIR
         self._device = self._resolve_device()
-        self._net: DuelingDQN | None = None
-        self._model_path: str | None = None
-        self._vcfg: ModelVersionConfig = MODEL_VERSIONS["v1"]  # Default
-
-        # Manuelle Overrides (None = auto-detect aus Dateinamen)
-        self._override_version: str | None = None
-        self._override_asset: str | None = None
-        self._override_model_file: str | None = None
+        # Restore from shared state
+        self._net = DQNAnalyzer._shared_net
+        self._model_path = DQNAnalyzer._shared_model_path
+        self._vcfg: ModelVersionConfig = DQNAnalyzer._shared_vcfg or MODEL_VERSIONS["v1"]
+        self._override_version = DQNAnalyzer._shared_override_version
+        self._override_asset = DQNAnalyzer._shared_override_asset
+        self._override_model_file = DQNAnalyzer._shared_override_model_file
 
     @staticmethod
     def _resolve_device() -> torch.device:
@@ -489,6 +496,12 @@ class DQNAnalyzer:
         # Cache invalidieren → naechster _load_model() laedt neu
         self._net = None
         self._model_path = None
+        # Persist to class-level shared state
+        DQNAnalyzer._shared_override_model_file = filename
+        DQNAnalyzer._shared_override_version = version
+        DQNAnalyzer._shared_override_asset = asset
+        DQNAnalyzer._shared_net = None
+        DQNAnalyzer._shared_model_path = None
 
         # Info-Dict aufbauen
         model_path = self._resolve_model_path()
@@ -654,6 +667,10 @@ class DQNAnalyzer:
         net.eval()
         self._net = net
         self._model_path = latest
+        # Persist to shared state
+        DQNAnalyzer._shared_net = net
+        DQNAnalyzer._shared_model_path = latest
+        DQNAnalyzer._shared_vcfg = self._vcfg
         return net
 
     # ── State-Vektor aus DB (identisch zu TradeAI/predict.py) ───────────────

@@ -569,7 +569,7 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
       </div>
 
       <!-- Bot Toggle + KPIs -->
-      <div class="g4 mb14">
+      <div class="g4 mb14" style="grid-template-columns:repeat(5,1fr);">
         <div class="card" id="trd-bot-card">
           <div class="card-hd"><span class="card-title">Bot Status</span><span class="badge badge-r" id="trd-bot-badge">GESTOPPT</span></div>
           <div style="display:flex;gap:8px;margin-top:10px;">
@@ -577,6 +577,7 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
             <button class="btn btn-ghost" style="flex:1;" onclick="triggerAnalyze('trd')">Analyse</button>
           </div>
         </div>
+        <div class="card"><div class="card-hd"><span class="card-title">Kapital</span></div><div class="kpi-val" id="trd-balance">—</div><div class="kpi-delta" id="trd-equity-sub" style="font-size:10px;color:var(--text-dim);"></div></div>
         <div class="card"><div class="card-hd"><span class="card-title">Tages-P/L</span></div><div class="kpi-val" id="trd-pl">—</div><div class="kpi-delta" id="trd-pl-d"></div></div>
         <div class="card"><div class="card-hd"><span class="card-title">Trades heute</span></div><div class="kpi-val blue" id="trd-today">—</div></div>
         <div class="card"><div class="card-hd"><span class="card-title">Win Rate</span></div><div class="kpi-val" id="trd-winrate">—</div></div>
@@ -586,15 +587,6 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
       <div class="card mb14">
         <div class="card-hd"><span class="card-title">Signale</span><span class="badge badge-d" id="trd-sig-ts">—</span></div>
         <div id="trd-signals"><div class="empty">Klicke "Analyse" oben.</div></div>
-      </div>
-
-      <!-- Equity Kurve -->
-      <div class="card mb14" id="trd-equity-card" style="display:none;">
-        <div class="card-hd">
-          <span class="card-title">P/L Verlauf</span>
-          <span class="badge badge-b" id="trd-equity-badge">—</span>
-        </div>
-        <div class="chart-wrap h160"><canvas id="trdEquityChart"></canvas></div>
       </div>
 
       <!-- Asset Kurve -->
@@ -1388,7 +1380,7 @@ let _trdPollInterval = null;
 
 async function loadTradingPage() {
   updateTradingBotCard(botRunning);
-  updateTrdKPIs();
+  await updateTrdKPIs();
   await loadTrdModels();
   loadTrdActiveModel();
   loadTrdSettings();
@@ -1398,16 +1390,31 @@ async function loadTradingPage() {
   _trdPollInterval = setInterval(pollTradingStatus, 30000);
 }
 
-function updateTrdKPIs() {
-  if (!_lastStatus) return;
-  const p = _lastStatus.performance || {};
-  setText('trd-pl', eur(p.pl_today));
-  const isPos = (p.pl_today || 0) >= 0;
-  setClass('trd-pl', 'kpi-val' + (isPos ? '' : ' red'));
-  setText('trd-pl-d', p.pl_today_pct ? pct(p.pl_today_pct) : '');
-  setClass('trd-pl-d', 'kpi-delta ' + (isPos ? 'pos' : 'neg'));
-  setText('trd-today', _lastStatus.trades_today ?? '—');
-  setText('trd-winrate', p.win_rate != null ? p.win_rate.toFixed(1) + '%' : '—');
+async function updateTrdKPIs() {
+  try {
+    const status = await apiFetch('/api/status');
+    _lastStatus = status;
+    const p = status.performance || {};
+    const cur = status.currency || 'EUR';
+    const fmt = v => v == null ? '—'
+      : cur + ' ' + Number(v).toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+    // Balance / Equity
+    const b = status.balance;
+    const eq = status.equity;
+    setText('trd-balance', b != null && b !== 0 ? fmt(b) : '—');
+    setText('trd-equity-sub', eq != null && eq !== b ? `Equity: ${fmt(eq)}` : '');
+
+    // P/L
+    setText('trd-pl', fmt(p.pl_today));
+    const isPos = (p.pl_today || 0) >= 0;
+    setClass('trd-pl', 'kpi-val' + (isPos ? '' : ' red'));
+    setText('trd-pl-d', p.pl_today_pct ? pct(p.pl_today_pct) : '');
+    setClass('trd-pl-d', 'kpi-delta ' + (isPos ? 'pos' : 'neg'));
+
+    setText('trd-today', status.trades_today ?? '—');
+    setText('trd-winrate', p.win_rate != null ? p.win_rate.toFixed(1) + '%' : '—');
+  } catch(e) { console.warn('updateTrdKPIs:', e); }
 }
 
 async function loadTrdModels() {
@@ -1601,7 +1608,6 @@ async function loadTradingTrades() {
 
 function buildTrdCharts(closed) {
   if (!closed.length) {
-    document.getElementById('trd-equity-card').style.display = 'none';
     document.getElementById('trd-asset-card').style.display = 'none';
     return;
   }
@@ -1611,7 +1617,6 @@ function buildTrdCharts(closed) {
 
   trdCharts = ChartModule.create({
     assetCanvasId:  'trdAssetChart',
-    equityCanvasId: 'trdEquityChart',
     resetBtnId:     'trd-chart-reset-zoom',
     onTradeSelect:  trdTradeSelect,
     onTradeHover:   idx => {
@@ -1628,22 +1633,8 @@ function buildTrdCharts(closed) {
     getTradeList:   () => _trdTradesFull,
   });
 
-  // Equity curve from cumulative P/L
-  let running = 0;
-  const toMs = ts => ts ? new Date(ts).getTime() : 0;
-  const equityPts = [{ x: toMs(_trdTradesFull[0]?.entry_ts), y: 0 }];
-  _trdTradesFull.forEach((t, i) => {
-    running += t.pnl || 0;
-    running = Math.round(running * 100) / 100;
-    equityPts.push({ x: toMs(t.exit_ts || t.entry_ts), y: running, tradeIdx: i, asset: t.asset, dir: t.direction });
-  });
-
-  document.getElementById('trd-equity-card').style.display = '';
   const first = _trdTradesFull[0]?.entry_ts?.slice(0,10) || '';
   const last  = _trdTradesFull[_trdTradesFull.length-1]?.exit_ts?.slice(0,10) || '';
-  setText('trd-equity-badge', `${first} – ${last}`);
-  trdCharts.renderEquityChart(equityPts, false);
-
   document.getElementById('trd-asset-card').style.display = '';
   setText('trd-asset-badge', `${first} – ${last}`);
   trdCharts.renderAssetChart();
@@ -1732,7 +1723,7 @@ async function pollTradingStatus() {
   try {
     await refreshBotStatus();
     updateTradingBotCard(botRunning);
-    updateTrdKPIs();
+    await updateTrdKPIs();
     // Refresh open positions
     const d = await apiFetch('/api/trades?limit=5&status=OPEN');
     const open = d.trades || [];

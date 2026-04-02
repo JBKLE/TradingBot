@@ -143,6 +143,12 @@ async def _process_dqn_signals(
         epic = config.WATCHLIST.get(asset, {}).get("epic", asset)
         has_position = epic in pos_by_epic
 
+        # Asset-Filter: nur aktive Assets traden (CLOSE immer erlaubt)
+        if config.BOT_ACTIVE_ASSETS and asset not in config.BOT_ACTIVE_ASSETS:
+            if action != "CLOSE":
+                logger.debug("Skip %s %s – Asset nicht aktiv", asset, action)
+                continue
+
         # ── CLOSE: Position schliessen (auch bei Kill-Switch!) ───────────
         if action == "CLOSE" and has_position:
             pos = pos_by_epic[epic]
