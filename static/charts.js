@@ -423,7 +423,10 @@ const ChartModule = (() => {
       const totalRange = origData[origData.length - 1].x - origData[0].x;
       const visibleRange = toMs - fromMs;
       if (totalRange <= 0) return;
-      if (totalRange / visibleRange < 1.5) { removeDetailCandles(); assetChart.update('none'); return; }
+      // Near live edge: always fetch fresh data (extend toMs to now)
+      const nearLive = (Date.now() - toMs) < 5 * 60 * 1000;
+      if (nearLive) toMs = Date.now() + 60000;
+      if (totalRange / visibleRange < 1.5 && !nearLive) { removeDetailCandles(); assetChart.update('none'); return; }
 
       const assets = assetChart.data.datasets
         .filter(ds => ds.yAxisID === 'yR' && ds.label !== '_hidden' && !ds._inspectId)
@@ -493,6 +496,62 @@ const ChartModule = (() => {
       }
     }
 
+    /* ── live price append ────────────────────────────────── */
+    /**
+     * Append a single live price point to an asset dataset.
+     * If the chart's visible right edge is near "now", auto-scroll
+     * so the new point stays visible (live-follow mode).
+     */
+    function appendLivePrice(asset, tsMs, price) {
+      if (!assetChart) return;
+      const ds = assetChart.data.datasets.find(
+        dd => dd.label === asset && dd.yAxisID === 'yR' && !dd._inspectId
+      );
+      if (!ds) return;
+      const data = ds._origData || ds.data;
+      const pt = { x: tsMs, y: price };
+
+      // Avoid duplicate timestamps
+      if (data.length && data[data.length - 1].x >= tsMs) return;
+      data.push(pt);
+      // Also push to active data if detail view is active
+      if (ds._origData && ds.data !== ds._origData) {
+        ds.data.push(pt);
+      }
+
+      // Auto-scroll only when user has zoomed in and the visible right
+      // edge was near the previous last point (= "following" the live data).
+      // If chart is fully zoomed out, just update — Chart.js auto-scales.
+      const xScale = assetChart.scales.x;
+      if (xScale && assetChart.isZoomedOrPanned && assetChart.isZoomedOrPanned()) {
+        const margin = 3 * 60 * 1000; // 3 min
+        const prevLast = data.length >= 2 ? data[data.length - 2].x : tsMs;
+        if (xScale.max >= prevLast - margin) {
+          const shift = tsMs - prevLast;
+          if (shift > 0) {
+            assetChart.zoomScale('x', {
+              min: xScale.min + shift,
+              max: tsMs + margin / 3,
+            });
+          }
+        }
+      }
+
+      assetChart.update('none');
+    }
+
+    /**
+     * Check whether the chart's right edge is near "now" (within threshold).
+     * Used to decide whether to auto-refresh on zoom/pan near live edge.
+     */
+    function isNearLiveEdge(thresholdMs) {
+      if (!assetChart) return false;
+      const xScale = assetChart.scales.x;
+      if (!xScale) return false;
+      const now = Date.now();
+      return (now - xScale.max) < (thresholdMs || 5 * 60 * 1000);
+    }
+
     /* ── update (redraw without re-creating) ──────────────── */
     function update() {
       if (assetChart)  assetChart.update('none');
@@ -516,6 +575,8 @@ const ChartModule = (() => {
       destroy,
       setDetailDb,
       removeDetailCandles,
+      appendLivePrice,
+      isNearLiveEdge,
       get assetChart()  { return assetChart; },
       get equityChart() { return equityChart; },
     };

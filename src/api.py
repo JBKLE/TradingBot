@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 # SSE-Event: wird von unified_tick gesetzt wenn neue Signale vorliegen
 _signal_event: asyncio.Event = asyncio.Event()
+# SSE-Event: wird gesetzt wenn ein Trade geöffnet/geschlossen wird
+_trade_event: asyncio.Event = asyncio.Event()
 
 # Bot-State und Settings (Modul-Level für Import aus main.py)
 _bot_state: dict = {"running": False}
@@ -1320,7 +1322,7 @@ def create_api() -> FastAPI:
 
     @app.get("/api/bot/signals/stream")
     async def stream_bot_signals():
-        """SSE-Stream: pusht neue Signale sofort wenn verfügbar."""
+        """SSE-Stream: pusht Signale + Trade-Updates sofort wenn verfügbar."""
         import json as _json
 
         async def event_generator():
@@ -1332,15 +1334,51 @@ def create_api() -> FastAPI:
                 last_ts = config.BOT_LAST_SIGNALS[0].get("checked_at") if config.BOT_LAST_SIGNALS else None
 
             while True:
+                # Wait for either signal or trade event
+                _signal_event.clear()
+                _trade_event.clear()
+                sig_task = asyncio.create_task(_signal_event.wait())
+                trd_task = asyncio.create_task(_trade_event.wait())
                 try:
-                    _signal_event.clear()
-                    await asyncio.wait_for(_signal_event.wait(), timeout=30)
-                except asyncio.TimeoutError:
-                    # Send heartbeat to keep connection alive
+                    done, pending = await asyncio.wait(
+                        {sig_task, trd_task},
+                        timeout=30,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for t in pending:
+                        t.cancel()
+                except asyncio.CancelledError:
+                    sig_task.cancel()
+                    trd_task.cancel()
+                    return
+
+                if not done:
+                    # Timeout — heartbeat
                     yield ": heartbeat\n\n"
                     continue
 
-                if config.BOT_LAST_SIGNALS:
+                # Trade event: send trade update
+                if trd_task in done:
+                    try:
+                        import aiosqlite
+                        rows: list[dict] = []
+                        async with aiosqlite.connect(config.DB_PATH) as db:
+                            db.row_factory = aiosqlite.Row
+                            async with db.execute(
+                                "SELECT id, timestamp, asset, direction, entry_price, stop_loss, "
+                                "take_profit, position_size, confidence, deal_id, status, exit_price, "
+                                "exit_timestamp, profit_loss, profit_loss_pct, model "
+                                "FROM trades ORDER BY timestamp DESC LIMIT 100",
+                            ) as cur:
+                                async for row in cur:
+                                    rows.append(dict(row))
+                        data = _json.dumps({"trade_update": rows})
+                        yield f"data: {data}\n\n"
+                    except Exception as exc:
+                        logger.debug("SSE trade_update failed: %s", exc)
+
+                # Signal event: send signals
+                if sig_task in done and config.BOT_LAST_SIGNALS:
                     new_ts = config.BOT_LAST_SIGNALS[0].get("checked_at")
                     if new_ts != last_ts:
                         last_ts = new_ts
@@ -1414,6 +1452,7 @@ def create_api() -> FastAPI:
         try:
             result = await broker.close_position(deal_id)
             logger.info("Position manuell geschlossen: %s", deal_id)
+            _trade_event.set()
             return {"closed": True, "deal_id": deal_id, "result": result}
         except Exception as exc:
             logger.error("Position close failed: %s – %s", deal_id, exc)
@@ -1441,6 +1480,8 @@ def create_api() -> FastAPI:
                     errors.append({"deal_id": row["deal_id"], "error": str(exc)})
         except Exception as exc:
             raise HTTPException(500, str(exc))
+        if closed:
+            _trade_event.set()
         return {"closed": closed, "errors": errors, "total": len(closed)}
 
     # ── GET /api/snapshots ─────────────────────────────────────────────────

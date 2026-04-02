@@ -20,7 +20,7 @@ class Notifier:
 
     async def notify_trade_opened(self, trade: Trade) -> None:
         emoji = "🟢"
-        title = f"{emoji} Trade eröffnet: {trade.asset} {trade.direction.value}"
+        title = f" Trade eröffnet: {trade.asset} {trade.direction.value}"
         body = (
             f"@ {trade.entry_price:.4f} | "
             f"SL: {trade.stop_loss:.4f} | "
@@ -40,11 +40,10 @@ class Notifier:
             emoji = "🔴"
 
         sign = "+" if profit_loss >= 0 else ""
-        title = f"{emoji} Trade geschlossen: {trade.asset} {sign}{profit_loss:.2f} EUR"
+        title = f" Trade geschlossen: {trade.asset} {sign}{profit_loss:.2f} EUR"
         body = (
             f"Exit: {exit_price:.4f} | "
             f"P/L: {sign}{profit_loss:.2f} EUR ({sign}{profit_loss_pct:.2f}%) | "
-            f"Status: {status.value}"
         )
         await self._send(title, body, priority="default")
 

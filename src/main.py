@@ -105,6 +105,12 @@ async def unified_tick() -> None:
                 profit_loss=event["profit_loss"],
                 profit_loss_pct=event["profit_loss_pct"],
             )
+        if closed_events:
+            try:
+                from .api import _trade_event
+                _trade_event.set()
+            except Exception:
+                pass
 
         # == 5. DQN-Inferenz fuer alle 4 Assets (State aus DB) ================
         analyzer = DQNAnalyzer()
@@ -239,6 +245,11 @@ async def _process_dqn_signals(
             if result.success and result.trade:
                 await notifier.notify_trade_opened(result.trade)
                 logger.info("Trade opened: %s deal_id=%s", asset, result.deal_id)
+                try:
+                    from .api import _trade_event
+                    _trade_event.set()
+                except Exception:
+                    pass
             else:
                 logger.error("Trade failed %s: %s", asset, result.error)
 
@@ -282,6 +293,11 @@ async def _close_position(broker, position, asset: str, notifier: Notifier) -> N
             "DQN-CLOSE: %s (%s) geschlossen – P/L=%.2f (%.2f%%)",
             asset, position.deal_id, pl, pl_pct,
         )
+        try:
+            from .api import _trade_event
+            _trade_event.set()
+        except Exception:
+            pass
     except Exception as exc:
         logger.error("Close fehlgeschlagen fuer %s: %s", asset, exc)
         await notifier.notify_error(f"Close fehlgeschlagen: {asset}: {exc}")

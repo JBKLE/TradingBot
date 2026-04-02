@@ -838,10 +838,18 @@ class DQNAnalyzer:
 
     # ── Inferenz ──────────────────────────────────────────────────────────────
 
-    def _infer(self, state: np.ndarray, current_price: float, asset: str) -> dict:
+    def _infer(
+        self,
+        state: np.ndarray,
+        current_price: float,
+        asset: str,
+        has_position: bool = False,
+    ) -> dict:
         """Fuehrt DQN-Inferenz auf einem fertigen State-Vektor aus.
 
         Mappt versionsspezifische Aktionen auf einheitliche Bot-Aktionen.
+        Wenn CLOSE gewählt wird aber keine Position offen ist, wird die
+        nächstbeste Aktion (BUY/SELL/HOLD) verwendet.
         """
         vcfg = self._vcfg
         net = self._load_model()
@@ -855,6 +863,23 @@ class DQNAnalyzer:
 
         # Action-Mapping: versionsspezifisch → einheitlich (HOLD/BUY/SELL/CLOSE)
         bot_action = vcfg.action_map[raw_action]
+
+        # CLOSE ohne offene Position ist sinnlos → nächstbeste Aktion wählen
+        if bot_action == "CLOSE" and not has_position:
+            sorted_actions = np.argsort(q)[::-1]  # absteigend nach Q-Wert
+            for idx in sorted_actions:
+                alt = vcfg.action_map[int(idx)]
+                if alt != "CLOSE":
+                    logger.debug(
+                        "DQN %s: CLOSE ohne Position → Fallback auf %s (Q: %.4f → %.4f)",
+                        asset, alt, float(q[raw_action]), float(q[idx]),
+                    )
+                    raw_action = int(idx)
+                    bot_action = alt
+                    # Confidence auf Basis der gewählten Aktion neu berechnen
+                    softmax_conf = float(F.softmax(torch.FloatTensor(q), dim=0)[idx])
+                    confidence = _scale_confidence(softmax_conf)
+                    break
 
         # SL/TP fuer neuen Eintritt (aus Versions-Config)
         sl_pct = vcfg.sl_pct
@@ -897,7 +922,7 @@ class DQNAnalyzer:
     ) -> dict:
         """DQN-Inferenz fuer ein Asset (aus PriceBar-Objekten)."""
         state, current_price = self._build_state(asset, price_bars, open_position)
-        return self._infer(state, current_price, asset)
+        return self._infer(state, current_price, asset, has_position=open_position is not None)
 
     async def get_signal_from_db(
         self,
@@ -921,7 +946,7 @@ class DQNAnalyzer:
         state, current_price = self._build_state_from_arrays(
             asset, opens, highs, lows, closes, open_position,
         )
-        return self._infer(state, current_price, asset)
+        return self._infer(state, current_price, asset, has_position=open_position is not None)
 
     async def get_all_signals(
         self,

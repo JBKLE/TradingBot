@@ -1415,19 +1415,81 @@ function connectTrdSignalSSE() {
   _trdSignalSSE.onmessage = (e) => {
     try {
       const d = JSON.parse(e.data);
+
+      // ── Signal-Update ──
       if (d.signals && d.signals.length) {
         _lastSignals = d.signals;
         const trdAssets = getTrdActiveAssets();
         document.getElementById('trd-signals').innerHTML = trdSignalsHtml(d.signals, trdAssets);
         const latest = d.signals.reduce((max, s) => (s.checked_at || '') > max ? s.checked_at : max, '');
         if (latest) setText('trd-sig-ts', 'Bot: ' + new Date(latest).toLocaleTimeString('de-DE'));
+
+        // Push live prices into the chart
+        if (trdCharts) {
+          const activeAssets = trdAssets || ['GOLD', 'SILVER', 'OIL_CRUDE', 'NATURALGAS'];
+          for (const sig of d.signals) {
+            if (!sig.current_price || !sig.checked_at) continue;
+            if (!activeAssets.includes(sig.asset)) continue;
+            const tsMs = new Date(sig.checked_at).getTime();
+            trdCharts.appendLivePrice(sig.asset, tsMs, sig.current_price);
+          }
+        }
+      }
+
+      // ── Trade-Update (open/closed) ──
+      if (d.trade_update) {
+        handleTrdTradeUpdate(d.trade_update);
       }
     } catch(err) { console.warn('SSE parse error:', err); }
   };
   _trdSignalSSE.onerror = () => {
-    // Reconnect on error (EventSource does this automatically, but log it)
     console.warn('Signal SSE connection lost, reconnecting...');
   };
+}
+
+function handleTrdTradeUpdate(trades) {
+  const open   = trades.filter(t => t.status === 'OPEN');
+  const closed = trades.filter(t => t.status !== 'OPEN');
+
+  // ── Update open positions table ──
+  setText('trd-open-badge', open.length);
+  if (open.length === 0) {
+    document.getElementById('trd-open-body').innerHTML = '<div class="empty">Keine offenen Positionen.</div>';
+  } else {
+    document.getElementById('trd-open-body').innerHTML = `
+      <table class="tbl"><thead><tr>
+        <th>Zeit</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
+        <th>SL</th><th>TP</th><th>Conf</th><th></th>
+      </tr></thead><tbody>
+      ${open.map(t => `<tr>
+        <td>${ts2time(t.timestamp)}</td><td>${t.asset}</td>
+        <td class="${t.direction==='BUY'?'cl':'cs'}">${t.direction==='BUY'?'▲ LONG':'▼ SHORT'}</td>
+        <td>${t.entry_price?.toFixed(2)??'—'}</td>
+        <td style="color:var(--red)">${t.stop_loss?.toFixed(2)??'—'}</td>
+        <td style="color:var(--green)">${t.take_profit?.toFixed(2)??'—'}</td>
+        <td style="color:var(--yellow)">${t.confidence??'—'}/10</td>
+        <td><button class="btn btn-danger btn-sm" onclick="closeTrdPosition('${t.deal_id}','${t.asset}')">Schliessen</button></td>
+      </tr>`).join('')}</tbody></table>`;
+  }
+
+  // ── Update closed trades table + chart ──
+  _trdTradesFull = closed.map(t => ({
+    asset: t.asset, direction: t.direction,
+    entry_ts: t.timestamp, exit_ts: t.exit_timestamp || '',
+    entry_price: t.entry_price, exit_price: t.exit_price,
+    sl_price: t.stop_loss, tp_price: t.take_profit,
+    pnl: t.profit_loss, pnl_pct: t.profit_loss_pct,
+    confidence: t.confidence, status: t.status,
+  }));
+  setText('trd-closed-badge', closed.length + ' Trades');
+  if (_trdTradesFull.length) {
+    renderTrdTradeTable(true);
+  } else {
+    document.getElementById('trd-closed-body').innerHTML = '<div class="empty">Keine abgeschlossenen Trades.</div>';
+  }
+
+  // Refresh KPIs
+  updateTrdKPIs();
 }
 
 async function updateTrdKPIs() {
@@ -1781,29 +1843,10 @@ async function pollTradingStatus() {
     await refreshBotStatus();
     updateTradingBotCard(botRunning);
     await updateTrdKPIs();
-    // Signals come via SSE now — just refresh positions
-    // Refresh open positions
-    const d = await apiFetch('/api/trades?limit=5&status=OPEN');
-    const open = d.trades || [];
-    setText('trd-open-badge', open.length);
-    if (open.length === 0) {
-      document.getElementById('trd-open-body').innerHTML = '<div class="empty">Keine offenen Positionen.</div>';
-    } else {
-      document.getElementById('trd-open-body').innerHTML = `
-        <table class="tbl"><thead><tr>
-          <th>Zeit</th><th>Asset</th><th>Richtung</th><th>Einstieg</th>
-          <th>SL</th><th>TP</th><th>Conf</th><th></th>
-        </tr></thead><tbody>
-        ${open.map(t => `<tr>
-          <td>${ts2time(t.timestamp)}</td><td>${t.asset}</td>
-          <td class="${t.direction==='BUY'?'cl':'cs'}">${t.direction==='BUY'?'▲ LONG':'▼ SHORT'}</td>
-          <td>${t.entry_price?.toFixed(2)??'—'}</td>
-          <td style="color:var(--red)">${t.stop_loss?.toFixed(2)??'—'}</td>
-          <td style="color:var(--green)">${t.take_profit?.toFixed(2)??'—'}</td>
-          <td style="color:var(--yellow)">${t.confidence??'—'}/10</td>
-          <td><button class="btn btn-danger btn-sm" onclick="closeTrdPosition('${t.deal_id}','${t.asset}')">Schliessen</button></td>
-        </tr>`).join('')}</tbody></table>`;
-    }
+    // Trade updates come via SSE now — poll as fallback
+    const d = await apiFetch('/api/trades?limit=100');
+    const trades = d.trades || [];
+    handleTrdTradeUpdate(trades);
   } catch(e) { console.warn('pollTrading:', e); }
 }
 
