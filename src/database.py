@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS trades (
     exit_price REAL,
     exit_timestamp TEXT,
     profit_loss REAL,
-    profit_loss_pct REAL
+    profit_loss_pct REAL,
+    model TEXT
 );
 """
 
@@ -96,6 +97,11 @@ async def init_db() -> None:
         await db.execute(CREATE_SNAPSHOTS_TABLE)
         await db.execute(CREATE_REVIEWS_TABLE)
         await db.execute(CREATE_RECHECKS_TABLE)
+        # Migration: model-Spalte hinzufuegen falls fehlend
+        try:
+            await db.execute("ALTER TABLE trades ADD COLUMN model TEXT")
+        except Exception:
+            pass  # Spalte existiert bereits
         await db.commit()
     logger.info("Database initialised at %s", config.DB_PATH)
 
@@ -107,8 +113,8 @@ async def save_trade(trade: Trade) -> int:
             """
             INSERT INTO trades
                 (timestamp, asset, epic, direction, entry_price, stop_loss,
-                 take_profit, position_size, confidence, reasoning, deal_id, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 take_profit, position_size, confidence, reasoning, deal_id, status, model)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 trade.timestamp.isoformat(),
@@ -123,6 +129,7 @@ async def save_trade(trade: Trade) -> int:
                 trade.reasoning,
                 trade.deal_id,
                 trade.status.value,
+                trade.model,
             ),
         )
         await db.commit()
@@ -617,4 +624,5 @@ def _row_to_trade(row: aiosqlite.Row) -> Trade:
         ),
         profit_loss=row["profit_loss"],
         profit_loss_pct=row["profit_loss_pct"],
+        model=row["model"] if "model" in row.keys() else None,
     )

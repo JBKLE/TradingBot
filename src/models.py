@@ -153,6 +153,7 @@ class Trade(BaseModel):
     exit_timestamp: Optional[datetime] = None
     profit_loss: Optional[float] = None
     profit_loss_pct: Optional[float] = None
+    model: Optional[str] = None
 
 
 class TradeResult(BaseModel):

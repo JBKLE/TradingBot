@@ -1305,6 +1305,11 @@ def create_api() -> FastAPI:
     async def get_bot_status():
         return {"running": _bot_state["running"], "settings": _bot_settings}
 
+    @app.get("/api/bot/signals")
+    async def get_bot_signals():
+        """Letzte Signale aus dem unified_tick (gecacht)."""
+        return {"signals": config.BOT_LAST_SIGNALS}
+
     @app.get("/api/bot/settings")
     async def get_bot_settings():
         return _bot_settings
@@ -1429,7 +1434,7 @@ def create_api() -> FastAPI:
                 async with db.execute(
                     f"SELECT id, timestamp, asset, direction, entry_price, stop_loss, "
                     f"take_profit, position_size, confidence, deal_id, status, exit_price, "
-                    f"exit_timestamp, profit_loss, profit_loss_pct "
+                    f"exit_timestamp, profit_loss, profit_loss_pct, model "
                     f"FROM trades {where} ORDER BY timestamp DESC LIMIT ?",
                     (limit,),
                 ) as cur:

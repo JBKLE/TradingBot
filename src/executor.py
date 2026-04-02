@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 
 from . import config, database
+from .ai_analyzer import DQNAnalyzer
 from .broker import CapitalComBroker
 from .models import Direction, Trade, TradeResult, TradeSignal, TradeStatus
 
@@ -132,6 +133,13 @@ class TradeExecutor:
             )
 
         # ── 3. Persist to database ────────────────────────────────────────────
+        # Aktives Modell ermitteln
+        try:
+            model_info = DQNAnalyzer().get_current_model_info()
+            model_name = model_info.get("model_file")
+        except Exception:
+            model_name = None
+
         trade = Trade(
             timestamp=datetime.now(tz=config.TZ),
             asset=signal.asset,
@@ -145,6 +153,7 @@ class TradeExecutor:
             reasoning=signal.reasoning,
             deal_id=actual_deal_id,
             status=TradeStatus.OPEN,
+            model=model_name,
         )
         trade.id = await database.save_trade(trade)
 

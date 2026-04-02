@@ -110,6 +110,12 @@ async def unified_tick() -> None:
         analyzer = DQNAnalyzer()
         signals = await analyzer.get_all_signals(open_positions)
 
+        # Signale mit Timestamp cachen fuer Dashboard
+        ts_now = datetime.now().isoformat()
+        for sig in signals:
+            sig["checked_at"] = ts_now
+        config.BOT_LAST_SIGNALS = signals
+
         # == 6. Signale verarbeiten ============================================
         await _process_dqn_signals(signals, open_positions, broker, executor, notifier)
 

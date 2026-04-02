@@ -1172,23 +1172,26 @@ function signalsHtml(signals, compact = false) {
   return `<div class="signal-grid" style="grid-template-columns:${cols};">${items}</div>`;
 }
 
-function trdSignalsHtml(signals) {
+function trdSignalsHtml(signals, activeAssets) {
   if (!signals || !signals.length) return '<div class="empty">Keine Signale.</div>';
+  // Filter by active assets if provided
+  const filtered = activeAssets
+    ? signals.filter(s => activeAssets.includes(s.asset))
+    : signals;
+  if (!filtered.length) return '<div class="empty">Keine aktiven Assets ausgewählt.</div>';
   const ACTION_COLORS = {
     BUY: 'var(--green)', SELL: 'var(--red)', HOLD: 'var(--text-dim)', CLOSE: 'var(--yellow)',
     CANCEL: 'var(--text-dim)',
   };
-  const items = signals.map(s => {
+  const items = filtered.map(s => {
     const a = (s.action || 'HOLD').toUpperCase();
     const cls = a === 'BUY' ? 'buy' : a === 'SELL' ? 'sell' : 'hold';
     const sym = a === 'BUY' ? '▲ BUY' : a === 'SELL' ? '▼ SELL' : a === 'CLOSE' ? '✕ CLOSE' : '— HOLD';
     const qv = s.q_values || {};
-    // Find min/max for scaling
     const vals = Object.values(qv);
     const qMin = Math.min(...vals, 0);
     const qMax = Math.max(...vals, 0.001);
     const range = qMax - qMin || 1;
-    // Build Q-value rows
     const qRows = Object.entries(qv).map(([act, val]) => {
       const isActive = act === a;
       const pct = ((val - qMin) / range * 100).toFixed(0);
@@ -1200,13 +1203,19 @@ function trdSignalsHtml(signals) {
       </div>`;
     }).join('');
     const conf = s.confidence || 0;
+    // Timestamp
+    const checkedAt = s.checked_at ? new Date(s.checked_at).toLocaleTimeString('de-DE', {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
     return `<div class="signal-card ${cls}">
-      <div class="sc-asset">${s.asset}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div class="sc-asset">${s.asset}</div>
+        ${checkedAt ? `<span style="font-size:10px;color:var(--text-dim);font-family:'Share Tech Mono',monospace;">${checkedAt}</span>` : ''}
+      </div>
       <div class="sc-action ${cls}">${sym} <span style="font-weight:400;opacity:.7;">(${conf}/10)</span></div>
       ${qRows}
     </div>`;
   }).join('');
-  return `<div class="signal-grid" style="grid-template-columns:1fr 1fr;">${items}</div>`;
+  const cols = filtered.length <= 2 ? '1fr 1fr' : `repeat(${Math.min(filtered.length, 4)},1fr)`;
+  return `<div class="signal-grid" style="grid-template-columns:${cols};">${items}</div>`;
 }
 
 /* ─── DASHBOARD PAGE ──────────────────────────────────────── */
@@ -1356,12 +1365,16 @@ async function triggerAnalyze(ctx) {
   try {
     const d = await apiFetch('/api/analyze', { method: 'POST' });
     _lastSignals = d.signals;
+    // Add checked_at for manual analyze
+    const now = new Date().toISOString();
+    d.signals.forEach(s => { if (!s.checked_at) s.checked_at = now; });
+    const trdAssets = getTrdActiveAssets();
     document.getElementById(target).innerHTML =
-      ctx === 'trd' ? trdSignalsHtml(d.signals) : signalsHtml(d.signals, false);
+      ctx === 'trd' ? trdSignalsHtml(d.signals, trdAssets) : signalsHtml(d.signals, false);
     if (ts_el) setText(ts_el, 'Scan: ' + ts2time(d.timestamp));
     // Mirror to other page if loaded
     if (ctx === 'dash' && document.getElementById('trd-signals'))
-      document.getElementById('trd-signals').innerHTML = trdSignalsHtml(d.signals);
+      document.getElementById('trd-signals').innerHTML = trdSignalsHtml(d.signals, trdAssets);
     if (ctx === 'trd' && document.getElementById('dash-signals'))
       document.getElementById('dash-signals').innerHTML = signalsHtml(d.signals, false);
   } catch(e) {
@@ -1384,6 +1397,7 @@ async function loadTradingPage() {
   await loadTrdModels();
   loadTrdActiveModel();
   loadTrdSettings();
+  pollTrdSignals();
   loadTradingTrades();
   // Start polling every 30s
   if (_trdPollInterval) clearInterval(_trdPollInterval);
@@ -1494,6 +1508,12 @@ function autoSelectTrdAssets(modelAsset, filename) {
   cbs.forEach(cb => { cb.checked = detected.includes(cb.value); });
   document.getElementById('trd-asset-all').checked = detected.length === ALL.length;
   updateTrdAssetLabel();
+}
+
+function getTrdActiveAssets() {
+  const cbs = document.querySelectorAll('.trd-asset-cb');
+  const checked = [...cbs].filter(c => c.checked).map(c => c.value);
+  return checked.length === cbs.length ? null : checked; // null = alle
 }
 
 function toggleTrdAssetDropdown() {
@@ -1724,6 +1744,8 @@ async function pollTradingStatus() {
     await refreshBotStatus();
     updateTradingBotCard(botRunning);
     await updateTrdKPIs();
+    // Refresh bot signals (from unified_tick cache)
+    await pollTrdSignals();
     // Refresh open positions
     const d = await apiFetch('/api/trades?limit=5&status=OPEN');
     const open = d.trades || [];
@@ -1747,6 +1769,19 @@ async function pollTradingStatus() {
         </tr>`).join('')}</tbody></table>`;
     }
   } catch(e) { console.warn('pollTrading:', e); }
+}
+
+async function pollTrdSignals() {
+  try {
+    const d = await apiFetch('/api/bot/signals');
+    if (d.signals && d.signals.length) {
+      _lastSignals = d.signals;
+      const trdAssets = getTrdActiveAssets();
+      document.getElementById('trd-signals').innerHTML = trdSignalsHtml(d.signals, trdAssets);
+      const latest = d.signals.reduce((max, s) => s.checked_at > max ? s.checked_at : max, '');
+      if (latest) setText('trd-sig-ts', 'Bot: ' + new Date(latest).toLocaleTimeString('de-DE'));
+    }
+  } catch(e) { /* no cached signals yet */ }
 }
 
 /* ─── MULTI-SELECT: ASSETS (SIM) ─────────────────────────── */

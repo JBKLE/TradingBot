@@ -105,6 +105,9 @@ TRADING_ENABLED: bool = os.getenv("TRADING_ENABLED", "false").lower() == "true"
 # Bot-aktive Assets (wird vom Dashboard-UI gesetzt)
 BOT_ACTIVE_ASSETS: list[str] | None = None  # None = alle
 
+# Letzte Bot-Signale (vom unified_tick gesetzt, vom Dashboard gelesen)
+BOT_LAST_SIGNALS: list[dict] | None = None
+
 # ── Watchlist – Capital.com epic codes ────────────────────────────────────────
 WATCHLIST: dict[str, dict[str, str]] = {
     "GOLD": {"epic": "GOLD", "name": "Gold", "category": "precious_metals"},
