@@ -24,6 +24,17 @@ logger = logging.getLogger(__name__)
 # SSE-Event: wird von unified_tick gesetzt wenn neue Signale vorliegen
 _signal_event: asyncio.Event = asyncio.Event()
 
+# Bot-State und Settings (Modul-Level für Import aus main.py)
+_bot_state: dict = {"running": False}
+_bot_settings: dict = {
+    "min_confidence": 8,
+    "assets": ["GOLD", "SILVER", "OIL_CRUDE", "NATURALGAS"],
+    "risk_pct": 1.0,
+    "leverage": 20,
+    "sl_pct": 999,
+    "tp_pct": 999,
+}
+
 
 def create_api() -> FastAPI:
     """Erstellt die FastAPI-App mit allen Endpunkten."""
@@ -1294,22 +1305,10 @@ def create_api() -> FastAPI:
             raise HTTPException(500, str(exc))
 
     # ── Bot-Steuerung ──────────────────────────────────────────────────────
-    _bot_state: dict = {"running": False}
-    _bot_settings: dict = {
-        "min_confidence": 8,
-        "assets": ["GOLD", "SILVER", "OIL_CRUDE", "NATURALGAS"],
-        "risk_pct": 1.0,
-        "leverage": 20,
-        "sl_pct": 999,
-        "tp_pct": 999,
-    }
 
     @app.get("/api/bot/status")
     async def get_bot_status():
         return {"running": _bot_state["running"], "settings": _bot_settings}
-
-    # SSE: Signal-Event für Echtzeit-Push (Modul-Level für Import aus main.py)
-    global _signal_event
 
     @app.get("/api/bot/signals")
     async def get_bot_signals():

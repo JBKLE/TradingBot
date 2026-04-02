@@ -135,6 +135,12 @@ async def collect_prices(broker: CapitalComBroker) -> dict[str, dict]:
 
     if price_rows:
         await batch_insert_prices(price_rows)
+        # Also write to trades.db for trading page charts
+        try:
+            from . import database
+            await database.batch_insert_prices(price_rows)
+        except Exception as exc:
+            logger.debug("trades.db price insert failed: %s", exc)
 
     return current_prices
 

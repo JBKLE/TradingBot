@@ -89,6 +89,25 @@ CREATE TABLE IF NOT EXISTS trade_reviews (
 """
 
 
+CREATE_PRICE_HISTORY_TABLE = """
+CREATE TABLE IF NOT EXISTS price_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    asset TEXT NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    volume REAL DEFAULT 0.0
+);
+"""
+
+CREATE_PRICE_HISTORY_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_price_history_asset_ts
+ON price_history (asset, timestamp DESC);
+"""
+
+
 async def init_db() -> None:
     """Create all tables if they don't exist."""
     async with aiosqlite.connect(config.DB_PATH) as db:
@@ -97,11 +116,25 @@ async def init_db() -> None:
         await db.execute(CREATE_SNAPSHOTS_TABLE)
         await db.execute(CREATE_REVIEWS_TABLE)
         await db.execute(CREATE_RECHECKS_TABLE)
+        await db.execute(CREATE_PRICE_HISTORY_TABLE)
+        await db.execute(CREATE_PRICE_HISTORY_INDEX)
         # Migration: model-Spalte hinzufuegen falls fehlend
         try:
             await db.execute("ALTER TABLE trades ADD COLUMN model TEXT")
         except Exception:
             pass  # Spalte existiert bereits
+        await db.commit()
+
+
+async def batch_insert_prices(records: list[tuple]) -> None:
+    """Insert price_history rows into trades.db."""
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        await db.executemany(
+            """INSERT INTO price_history
+               (timestamp, asset, open, high, low, close, volume)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            records,
+        )
         await db.commit()
     logger.info("Database initialised at %s", config.DB_PATH)
 
