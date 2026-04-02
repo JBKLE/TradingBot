@@ -155,9 +155,12 @@ def list_available_models(models_dir: str | None = None) -> list[dict]:
     result = []
     for path in sorted(candidates, key=os.path.getmtime, reverse=True):
         info = parse_model_filename(path)
-        info["filename"] = os.path.basename(path)
+        basename = os.path.basename(path)
+        info["filename"] = basename
+        info["name"] = basename          # Alias fuer statisches Dashboard
         info["path"] = path
         info["size_mb"] = round(os.path.getsize(path) / 1024 / 1024, 1)
+        info["size_kb"] = round(os.path.getsize(path) / 1024, 1)
         result.append(info)
     return result
 
