@@ -139,8 +139,6 @@ async def _process_dqn_signals(
 ) -> None:
     """Verarbeitet DQN-Signale: BUY/SELL → validate → execute, CLOSE → schliessen."""
     strategy = TradingStrategy()
-    trades_today = await database.get_trades_today()
-    last_closed_trade = await database.get_last_closed_trade()
     account = await broker.get_account_balance()
 
     # Offene Positionen nach Epic indexieren
@@ -212,9 +210,6 @@ async def _process_dqn_signals(
                 analysis=analysis,
                 open_positions_count=len(open_positions),
                 account_balance=account.balance,
-                open_positions=open_positions,
-                trades_today=trades_today,
-                last_closed_trade=last_closed_trade,
             )
 
             if not validation.valid:
