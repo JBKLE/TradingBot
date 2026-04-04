@@ -62,6 +62,8 @@ class TimelineSimulator:
         self,
         db_path: str = HISTORY_DB_PATH,
         confidence_threshold: int = DEFAULT_CONFIDENCE_THRESHOLD,
+        confidence_levels: list[int] | None = None,
+        min_q_spread: float = 0.0,
         model_path: str | None = None,
         models_dir: str | None = None,
         # Financial simulation parameters (None = no financial tracking)
@@ -76,7 +78,8 @@ class TimelineSimulator:
     ) -> None:
         self.db_path = db_path
         self.output_db_path = output_db_path or db_path
-        self.confidence_threshold = confidence_threshold
+        self.confidence_levels = confidence_levels or list(range(confidence_threshold, 11))
+        self.min_q_spread = min_q_spread
         self._explicit_model_path = model_path  # wenn gesetzt, wird genau dieses Modell geladen
         self._models_dir = models_dir or config.AI_MODELS_DIR
         self._device = self._resolve_device()
@@ -224,8 +227,8 @@ class TimelineSimulator:
     # ── Batch inference ───────────────────────────────────────────────────────
 
     @torch.no_grad()
-    def _infer_batch(self, states: list[np.ndarray]) -> list[tuple[int, float]]:
-        """One forward pass for all states at once."""
+    def _infer_batch(self, states: list[np.ndarray]) -> list[tuple[int, float, np.ndarray]]:
+        """One forward pass for all states at once. Returns (action, softmax_conf, q_values)."""
         net   = self._load_model()
         batch = torch.FloatTensor(np.stack(states)).to(self._device)
         qs    = net(batch).cpu().numpy()
@@ -234,8 +237,18 @@ class TimelineSimulator:
             action = int(q.argmax())
             probs  = np.exp(q - q.max())
             probs /= probs.sum()
-            out.append((action, float(probs.max())))
+            out.append((action, float(probs.max()), q.copy()))
         return out
+
+    def _extract_q_fields(self, q: np.ndarray) -> dict:
+        """Extract q_buy, q_sell, q_close, q_spread from raw Q-values."""
+        rev = {v: k for k, v in self._vcfg.action_map.items()}
+        q_buy   = float(q[rev["BUY"]])   if "BUY"   in rev else None
+        q_sell  = float(q[rev["SELL"]])   if "SELL"  in rev else None
+        q_close = float(q[rev["CLOSE"]]) if "CLOSE" in rev else None
+        sorted_q = np.sort(q)[::-1]
+        q_spread = float(sorted_q[0] - sorted_q[1]) if len(sorted_q) >= 2 else 0.0
+        return {"q_buy": q_buy, "q_sell": q_sell, "q_close": q_close, "q_spread": q_spread}
 
     # ── Async entry point ─────────────────────────────────────────────────────
 
@@ -274,7 +287,13 @@ class TimelineSimulator:
                 )
             """)
             # Migrate: add columns if missing (table may pre-date these columns)
-            for col, ctype in [("confidence", "REAL"), ("close_confidence", "REAL")]:
+            for col, ctype in [
+                ("confidence", "REAL"), ("close_confidence", "REAL"),
+                ("q_buy", "REAL"), ("q_sell", "REAL"), ("q_close", "REAL"),
+                ("q_spread", "REAL"), ("rsi_entry", "REAL"), ("atr_pct_entry", "REAL"),
+                ("q_buy_exit", "REAL"), ("q_sell_exit", "REAL"), ("q_close_exit", "REAL"),
+                ("peak_pnl", "REAL"), ("peak_timestamp", "TEXT"), ("steps", "INTEGER"),
+            ]:
                 try:
                     await db.execute(f"ALTER TABLE sim_trades ADD COLUMN {col} {ctype}")
                 except Exception:
@@ -304,8 +323,8 @@ class TimelineSimulator:
             return {"error": "Leerer Zeitstrahl", "trades": 0}
 
         logger.info(
-            "Timeline simulation: %d assets | %d minutes | threshold=%d | device=%s",
-            len(asset_candles), self.total_minutes, self.confidence_threshold, self._device,
+            "Timeline simulation: %d assets | %d minutes | levels=%s | q_spread>=%.2f | device=%s",
+            len(asset_candles), self.total_minutes, self.confidence_levels, self.min_q_spread, self._device,
         )
 
         # ── Run heavy loop in thread – event loop stays free ──────────────────
@@ -399,6 +418,14 @@ class TimelineSimulator:
                 if asset in open_trades:
                     tr  = open_trades[asset]
                     buy = tr["direction"] == "BUY"
+
+                    # Peak-PnL + steps tracking
+                    tr["steps"] = tr.get("steps", 0) + 1
+                    current_peak = (c_high - tr["entry_price"]) if buy else (tr["entry_price"] - c_low)
+                    if current_peak > tr.get("peak_pnl", 0.0):
+                        tr["peak_pnl"] = current_peak
+                        tr["peak_timestamp"] = current_ts
+
                     hit_sl = (c_low <= tr["sl_price"]) if buy else (c_high >= tr["sl_price"])
                     hit_tp = (c_high >= tr["tp_price"]) if buy else (c_low <= tr["tp_price"])
 
@@ -478,9 +505,10 @@ class TimelineSimulator:
                 ]
                 results = self._infer_batch(states)
 
-                for (asset, _w, c_close, has_pos, _pd, _ur), (action_id, softmax_conf) in zip(states_to_infer, results):
+                for (asset, _w, c_close, has_pos, _pd, _ur), (action_id, softmax_conf, q_raw) in zip(states_to_infer, results):
                     confidence = _scale_confidence(softmax_conf)
                     bot_action = self._vcfg.action_map.get(action_id, "HOLD")
+                    qf = self._extract_q_fields(q_raw)
 
                     # ── CLOSE: offene Position am Markt schliessen ───────
                     if bot_action == "CLOSE" and asset in open_trades:
@@ -520,6 +548,9 @@ class TimelineSimulator:
                             "pnl":              pnl,
                             "r_multiple":       r_mult,
                             "close_confidence": confidence,
+                            "q_buy_exit":       qf["q_buy"],
+                            "q_sell_exit":      qf["q_sell"],
+                            "q_close_exit":     qf["q_close"],
                             "financial":        fin_close,
                             "capital_after":    running_capital if fin_enabled else None,
                         })
@@ -532,11 +563,22 @@ class TimelineSimulator:
                         continue
 
                     # ── BUY/SELL: neuen Trade eroeffnen (nur wenn flat) ──
-                    if bot_action in ("BUY", "SELL") and asset not in open_trades and confidence >= self.confidence_threshold:
+                    if bot_action in ("BUY", "SELL") and asset not in open_trades \
+                            and confidence in self.confidence_levels \
+                            and qf["q_spread"] >= self.min_q_spread:
                         direction = bot_action
                         trade_id += 1
                         sl = c_close * (1 - sl_pct) if direction == "BUY" else c_close * (1 + sl_pct)
                         tp = c_close * (1 + tp_pct) if direction == "BUY" else c_close * (1 - tp_pct)
+
+                        # RSI / ATR% from window
+                        _closes = _w[:, 3]
+                        _highs  = _w[:, 1]
+                        _lows   = _w[:, 2]
+                        _ref    = float(_closes[-1]) or 1.0
+                        rsi_entry   = round(float(_rsi(_closes)), 4)
+                        atr_pct_entry = round(float(np.clip(_atr(_highs, _lows, _closes) / (_ref + 1e-8), 0, 0.05) / 0.05), 4)
+
                         open_trades[asset] = {
                             "id":              trade_id,
                             "asset":           asset,
@@ -547,6 +589,15 @@ class TimelineSimulator:
                             "sl_price":        sl,
                             "tp_price":        tp,
                             "confidence":      confidence,
+                            "q_buy":           qf["q_buy"],
+                            "q_sell":          qf["q_sell"],
+                            "q_close":         qf["q_close"],
+                            "q_spread":        qf["q_spread"],
+                            "rsi_entry":       rsi_entry,
+                            "atr_pct_entry":   atr_pct_entry,
+                            "peak_pnl":        0.0,
+                            "peak_timestamp":  current_ts,
+                            "steps":           0,
                         }
 
         # Close any remaining open trades at last price
@@ -652,6 +703,10 @@ class TimelineSimulator:
                 t.get("status", "closed_end"),
                 t.get("pnl"),         t.get("r_multiple"),
                 t.get("confidence"),  t.get("close_confidence"),
+                t.get("q_buy"),       t.get("q_sell"),       t.get("q_close"),
+                t.get("q_spread"),    t.get("rsi_entry"),    t.get("atr_pct_entry"),
+                t.get("q_buy_exit"),  t.get("q_sell_exit"),  t.get("q_close_exit"),
+                t.get("peak_pnl"),    t.get("peak_timestamp"), t.get("steps"),
             )
             for t in trades
         ]
@@ -661,8 +716,12 @@ class TimelineSimulator:
             """INSERT OR IGNORE INTO sim_trades
                (asset, direction, sl_variant, entry_timestamp, entry_price,
                 sl_price, tp_price, exit_timestamp, exit_price, status, pnl, r_multiple,
-                confidence, close_confidence)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                confidence, close_confidence,
+                q_buy, q_sell, q_close, q_spread, rsi_entry, atr_pct_entry,
+                q_buy_exit, q_sell_exit, q_close_exit,
+                peak_pnl, peak_timestamp, steps)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             rows,
         )
         conn.commit()
@@ -725,6 +784,18 @@ class TimelineSimulator:
                     "status":         t.get("status", ""),
                     "confidence":       t.get("confidence", 0),
                     "close_confidence": t.get("close_confidence"),
+                    "q_buy":          t.get("q_buy"),
+                    "q_sell":         t.get("q_sell"),
+                    "q_close":        t.get("q_close"),
+                    "q_spread":       round(t["q_spread"], 4) if t.get("q_spread") is not None else None,
+                    "rsi_entry":      t.get("rsi_entry"),
+                    "atr_pct_entry":  t.get("atr_pct_entry"),
+                    "q_buy_exit":     t.get("q_buy_exit"),
+                    "q_sell_exit":    t.get("q_sell_exit"),
+                    "q_close_exit":   t.get("q_close_exit"),
+                    "peak_pnl":       round(t["peak_pnl"], 4) if t.get("peak_pnl") is not None else None,
+                    "peak_timestamp": t.get("peak_timestamp"),
+                    "steps":          t.get("steps"),
                     "netto_pnl_eur":  round(t["financial"]["netto_pnl_eur"], 2) if t.get("financial") else None,
                     "capital_after":  round(t["capital_after"], 2) if t.get("capital_after") is not None else None,
                     "lot_size":       round(t["financial"]["lot_size"], 4) if t.get("financial") else None,

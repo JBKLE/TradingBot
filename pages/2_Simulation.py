@@ -52,7 +52,7 @@ with _cfg_col2:
         _output_db = st.text_input("Ausgabe-DB:", value="simLastCharts.db", key="sim_output_db_manual")
 
 # ── Asset & Zeitraum ──────────────────────────────────────────────────────
-_ac1, _ac2, _ac3, _ac4 = st.columns(4)
+_ac1, _ac2, _ac3 = st.columns(3)
 with _ac1:
     _assets_all = ["GOLD", "SILVER", "OIL_CRUDE", "NATURALGAS"]
     _sim_assets = st.multiselect("Assets:", _assets_all, default=_assets_all, key="sim_assets")
@@ -60,8 +60,15 @@ with _ac2:
     _sim_start = st.date_input("Von:", value=None, key="sim_start")
 with _ac3:
     _sim_end = st.date_input("Bis:", value=None, key="sim_end")
-with _ac4:
-    _sim_conf = st.slider("Min. Confidence:", 1, 10, 7, key="sim_conf")
+
+_fc_col1, _fc_col2 = st.columns(2)
+with _fc_col1:
+    _sim_conf_levels = st.multiselect(
+        "Confidence-Stufen:", list(range(1, 11)), default=list(range(1, 11)),
+        key="sim_conf_levels",
+    )
+with _fc_col2:
+    _sim_q_spread = st.slider("Min. Q-Spread:", 0.0, 0.5, 0.0, step=0.01, key="sim_q_spread")
 
 # ── Finanz-Einstellungen ─────────────────────────────────────────────────
 sim_fin_enabled = st.checkbox("Finanzrechnung aktivieren", key="sim_fin_enabled")
@@ -85,7 +92,8 @@ if st.button("◈ SIMULATION STARTEN", type="primary", use_container_width=True)
         "model_path": _model_path,
         "output_db": _output_db,
         "assets": _sim_assets,
-        "confidence_threshold": _sim_conf,
+        "confidence_levels": _sim_conf_levels,
+        "min_q_spread": _sim_q_spread,
     }
     if _sim_start:
         _payload["start_date"] = str(_sim_start)
@@ -403,6 +411,14 @@ if sim_result and "error" not in sim_result:
             "entry_price": "Entry Preis", "exit_price": "Exit Preis",
             "pnl": "P/L (Pkt)", "r_multiple": "R-Mult",
             "status": "Status", "confidence": "Conf",
+            "close_confidence": "Close Conf",
+            "q_buy": "Q Buy", "q_sell": "Q Sell", "q_close": "Q Close",
+            "q_spread": "Q Spread",
+            "rsi_entry": "RSI Entry", "atr_pct_entry": "ATR% Entry",
+            "q_buy_exit": "Q Buy Exit", "q_sell_exit": "Q Sell Exit",
+            "q_close_exit": "Q Close Exit",
+            "peak_pnl": "Peak P/L", "peak_timestamp": "Peak Zeit",
+            "steps": "Steps",
             "netto_pnl_eur": "Netto P/L (€)",
             "capital_after": "Kapital nach (€)",
             "lot_size": "Lot", "margin_eur": "Margin (€)",

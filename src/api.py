@@ -708,6 +708,8 @@ def create_api() -> FastAPI:
         end_date: str | None = None
         assets: list[str] | None = None
         confidence_threshold: int = 8
+        confidence_levels: list[int] | None = None
+        min_q_spread: float = 0.0
         # Explicit model path (None = auto-select latest)
         model_path: str | None = None
         # Financial params (None = no financial tracking)
@@ -758,9 +760,13 @@ def create_api() -> FastAPI:
             else:
                 logger.warning("Angegebenes Modell nicht gefunden: %s – nehme neuestes", mp)
 
+        # Confidence: wenn levels explizit gegeben, nutze diese; sonst aus threshold ableiten
+        conf_levels = body.confidence_levels or list(range(body.confidence_threshold, 11))
+
         sim = TimelineSimulator(
             db_path=input_db_path,
-            confidence_threshold=body.confidence_threshold,
+            confidence_levels=conf_levels,
+            min_q_spread=body.min_q_spread,
             model_path=explicit_model,
             capital=body.capital,
             risk_pct=body.risk_pct,
@@ -793,6 +799,8 @@ def create_api() -> FastAPI:
             "start_date": body.start_date,
             "end_date": body.end_date,
             "confidence_threshold": body.confidence_threshold,
+            "confidence_levels": conf_levels,
+            "min_q_spread": body.min_q_spread,
             "capital": body.capital,
             "risk_pct": body.risk_pct,
             "leverage": body.leverage,
