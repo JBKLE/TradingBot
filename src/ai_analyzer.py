@@ -64,8 +64,10 @@ class ModelVersionConfig:
     tp_pct: float
     # Action-Mapping auf den einheitlichen Bot-Standard (HOLD/BUY/SELL/CLOSE)
     action_map: dict[int, str] = field(default_factory=dict)
-    # Position-Encoding: "r_multiple" (v2) oder "pct" (v1)
+    # Position-Encoding: "r_multiple" (v2) oder "pct" (v1/v5)
     position_encoding: str = "r_multiple"
+    # Position vector size: 4 (v1/v2) or 6 (v5: +peak_pnl_pct, +drawdown_from_peak)
+    position_size: int = 4
 
 
 MODEL_VERSIONS: dict[str, ModelVersionConfig] = {
@@ -100,6 +102,23 @@ MODEL_VERSIONS: dict[str, ModelVersionConfig] = {
         tp_pct=0.005,
         action_map={0: "HOLD", 1: "BUY", 2: "SELL", 3: "CLOSE"},
         position_encoding="r_multiple",
+    ),
+    "v5": ModelVersionConfig(
+        version="v5",
+        max_window=50,
+        n_indicators=6,
+        action_size=3,
+        actions={0: "BUY", 1: "SELL", 2: "CANCEL"},
+        state_size=266,
+        context_size=16,       # 6 + 4 + 6
+        dropout=0.15,
+        cnn_layers=3,
+        cnn_pool_size=4,
+        sl_pct=0.003,
+        tp_pct=0.005,
+        action_map={0: "BUY", 1: "SELL", 2: "CLOSE"},
+        position_encoding="pct",
+        position_size=6,
     ),
 }
 
@@ -563,6 +582,7 @@ class DQNAnalyzer:
 
         v1: 4 CNN-Layer (cnn.6.weight existiert), shared_in=1036
         v2: 3 CNN-Layer (kein cnn.6.weight), shared_in=526
+        v5: 3 CNN-Layer, shared_in=528 (position_size=6)
         """
         has_cnn6 = "cnn.6.weight" in sd
         shared_in = sd.get("shared.0.weight")
@@ -572,6 +592,8 @@ class DQNAnalyzer:
 
         if has_cnn6 and shared_width >= 1024:
             return "v1"
+        if not has_cnn6 and shared_width == 528:
+            return "v5"
         if not has_cnn6 and shared_width < 1024:
             return "v2"
         # Ambig – anhand CNN-Kernel-Groesse unterscheiden
@@ -790,14 +812,14 @@ class DQNAnalyzer:
         asset_oh[ASSET_INDEX[asset]] = 1.0
 
         # Position (Encoding je nach Version)
+        pos_size = vcfg.position_size  # 4 (v1/v2) or 6 (v5)
         if open_position is None:
-            pos = np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+            pos = np.zeros(pos_size, dtype=np.float32)
         else:
             sl_pct = vcfg.sl_pct
             if open_position.direction == Direction.BUY:
                 direction = 1.0
                 if vcfg.position_encoding == "pct":
-                    # v1: unrealised_pct = (price-entry)/entry * 100
                     unreal = (current_price - open_position.entry_price) / (open_position.entry_price + 1e-8) * 100.0
                     unreal = float(np.clip(unreal, -5, 5))
                 else:
@@ -816,7 +838,14 @@ class DQNAnalyzer:
                     unreal = float(np.clip(
                         (open_position.entry_price - current_price) / (risk + 1e-8), -3, 3,
                     ))
-            pos = np.array([1.0, direction, unreal, 0.0], dtype=np.float32)
+            if pos_size == 6:
+                # v5: [in_pos, dir, unreal_pct, steps_norm, peak_pnl_pct, drawdown]
+                steps_n  = min(open_position.steps_in_trade / 120.0, 1.0)
+                peak_pct = float(np.clip(open_position.peak_pnl_pct, -5.0, 5.0))
+                dd_pct   = float(np.clip(open_position.drawdown_from_peak, 0.0, 5.0))
+                pos = np.array([1.0, direction, unreal, steps_n, peak_pct, dd_pct], dtype=np.float32)
+            else:
+                pos = np.array([1.0, direction, unreal, 0.0], dtype=np.float32)
 
         state = np.concatenate([ohlcv.flatten(), indicators, asset_oh, pos])
         return state, current_price

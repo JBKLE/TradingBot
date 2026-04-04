@@ -56,6 +56,40 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ── v5 Peak-Tracker (persists across ticks) ──────────────────────────────────
+# {deal_id: {"steps": int, "peak_pnl_pct": float}}
+_peak_tracker: dict[str, dict] = {}
+
+
+def _update_peak_tracker(positions: list) -> None:
+    """Update v5 state fields (steps, peak, drawdown) on each PositionInfo."""
+    active_ids = set()
+    for pos in positions:
+        active_ids.add(pos.deal_id)
+        entry = pos.entry_price + 1e-8
+        if pos.direction == Direction.BUY:
+            pnl_pct = (pos.current_price - pos.entry_price) / entry * 100.0
+        else:
+            pnl_pct = (pos.entry_price - pos.current_price) / entry * 100.0
+
+        if pos.deal_id in _peak_tracker:
+            tr = _peak_tracker[pos.deal_id]
+            tr["steps"] += 1
+            if pnl_pct > tr["peak_pnl_pct"]:
+                tr["peak_pnl_pct"] = pnl_pct
+        else:
+            _peak_tracker[pos.deal_id] = {"steps": 1, "peak_pnl_pct": max(0.0, pnl_pct)}
+
+        tr = _peak_tracker[pos.deal_id]
+        pos.steps_in_trade = tr["steps"]
+        pos.peak_pnl_pct = tr["peak_pnl_pct"]
+        pos.drawdown_from_peak = max(0.0, tr["peak_pnl_pct"] - pnl_pct)
+
+    # Cleanup: remove closed positions
+    for deal_id in list(_peak_tracker):
+        if deal_id not in active_ids:
+            del _peak_tracker[deal_id]
+
 
 async def unified_tick() -> None:
     """Einziger 1-Min-Job – ersetzt sim_tick + daily_routine + monitor_positions.
@@ -83,6 +117,7 @@ async def unified_tick() -> None:
 
         # == 2. Offene Positionen (EINMAL, fuer alles) ========================
         open_positions = await broker.get_open_positions()  # 1 API-Call
+        _update_peak_tracker(open_positions)  # v5: peak/steps/drawdown
 
         # == 3. Sim-Engine (nutzt prices aus Schritt 1) =======================
         if config.SIM_ENABLED:

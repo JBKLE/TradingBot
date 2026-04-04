@@ -78,6 +78,10 @@ class PositionInfo(BaseModel):
     take_profit: Optional[float] = None
     profit_loss: float = 0.0
     profit_loss_pct: float = 0.0
+    # v5 state extras (populated by peak tracker in tick loop)
+    steps_in_trade: int = 0
+    peak_pnl_pct: float = 0.0
+    drawdown_from_peak: float = 0.0
 
 
 class AssetOutlook(BaseModel):

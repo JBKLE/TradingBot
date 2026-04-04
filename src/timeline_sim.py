@@ -176,6 +176,10 @@ class TimelineSimulator:
         has_position: bool = False,
         position_dir: float = 0.0,
         unrealised_r: float = 0.0,
+        # v5 extras (ignored for v1/v2)
+        steps_norm: float = 0.0,
+        peak_pnl_pct: float = 0.0,
+        drawdown_from_peak: float = 0.0,
     ) -> np.ndarray:
         vcfg = self._vcfg
         max_window = vcfg.max_window
@@ -206,9 +210,8 @@ class TimelineSimulator:
             e50     = float(np.clip(_ema(closes, min(50, avail)) / ref - 1, -0.1, 0.1) / 0.1)
 
             ind_list = [rsi, atr_pct, e20, e50]
-            # v2: MACD + Bollinger
+            # v2+: MACD + Bollinger
             if vcfg.n_indicators >= 6:
-                # Fuer Indikatoren brauchen wir die vollen Closes (nicht nur window)
                 ind_list.append(_macd_histogram(closes))
                 ind_list.append(_bollinger_width(closes))
         else:
@@ -218,10 +221,22 @@ class TimelineSimulator:
         asset_oh   = np.zeros(4, dtype=np.float32)
         if asset in ASSET_INDEX:
             asset_oh[ASSET_INDEX[asset]] = 1.0
-        pos = (
-            np.array([1.0, position_dir, float(np.clip(unrealised_r, -3, 3)), 0.0], dtype=np.float32)
-            if has_position else np.zeros(4, dtype=np.float32)
-        )
+
+        pos_size = vcfg.position_size
+        if not has_position:
+            pos = np.zeros(pos_size, dtype=np.float32)
+        elif pos_size == 6:
+            # v5: [in_pos, dir, unreal_pct, steps_norm, peak_pnl_pct, drawdown]
+            pos = np.array([
+                1.0, position_dir,
+                float(np.clip(unrealised_r, -5, 5)),
+                steps_norm,
+                float(np.clip(peak_pnl_pct, -5, 5)),
+                float(np.clip(drawdown_from_peak, 0, 5)),
+            ], dtype=np.float32)
+        else:
+            pos = np.array([1.0, position_dir, float(np.clip(unrealised_r, -3, 3)), 0.0], dtype=np.float32)
+
         return np.concatenate([ohlcv_buf.flatten(), indicators, asset_oh, pos])
 
     # ── Batch inference ───────────────────────────────────────────────────────
@@ -482,6 +497,9 @@ class TimelineSimulator:
                     has_pos = asset in open_trades
                     pos_dir = 0.0
                     unreal  = 0.0
+                    steps_n = 0.0
+                    peak_pct = 0.0
+                    dd_pct   = 0.0
                     if has_pos:
                         tr = open_trades[asset]
                         pos_dir = 1.0 if tr["direction"] == "BUY" else -1.0
@@ -491,7 +509,13 @@ class TimelineSimulator:
                             risk = abs(tr["entry_price"] - tr["sl_price"])
                             raw = (c_close - tr["entry_price"]) * pos_dir
                             unreal = raw / (risk + 1e-8)
-                    states_to_infer.append((asset, window, c_close, has_pos, pos_dir, unreal))
+                        # v5 extras
+                        if self._vcfg.position_size == 6:
+                            steps_n = min(tr.get("steps", 0) / 120.0, 1.0)
+                            entry_p = tr["entry_price"] + 1e-8
+                            peak_pct = tr.get("peak_pnl", 0.0) / entry_p * 100.0
+                            dd_pct = max(0.0, peak_pct - abs(unreal))
+                    states_to_infer.append((asset, window, c_close, has_pos, pos_dir, unreal, steps_n, peak_pct, dd_pct))
 
             if margin_call:
                 logger.info("Margin call at minute %d — capital: %.2f EUR", minute_idx, running_capital)
@@ -500,12 +524,15 @@ class TimelineSimulator:
             # ── Batch inference for all queued assets ─────────────────────
             if states_to_infer:
                 states = [
-                    self._build_state(a, w, has_position=hp, position_dir=pd, unrealised_r=ur)
-                    for a, w, _, hp, pd, ur in states_to_infer
+                    self._build_state(
+                        a, w, has_position=hp, position_dir=pd, unrealised_r=ur,
+                        steps_norm=sn, peak_pnl_pct=pp, drawdown_from_peak=dp,
+                    )
+                    for a, w, _, hp, pd, ur, sn, pp, dp in states_to_infer
                 ]
                 results = self._infer_batch(states)
 
-                for (asset, _w, c_close, has_pos, _pd, _ur), (action_id, softmax_conf, q_raw) in zip(states_to_infer, results):
+                for (asset, _w, c_close, *_rest), (action_id, softmax_conf, q_raw) in zip(states_to_infer, results):
                     confidence = _scale_confidence(softmax_conf)
                     bot_action = self._vcfg.action_map.get(action_id, "HOLD")
                     qf = self._extract_q_fields(q_raw)
