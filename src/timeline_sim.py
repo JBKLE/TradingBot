@@ -514,7 +514,7 @@ class TimelineSimulator:
                             steps_n = min(tr.get("steps", 0) / 120.0, 1.0)
                             entry_p = tr["entry_price"] + 1e-8
                             peak_pct = tr.get("peak_pnl", 0.0) / entry_p * 100.0
-                            dd_pct = max(0.0, peak_pct - abs(unreal))
+                            dd_pct = max(0.0, peak_pct - unreal)
                     states_to_infer.append((asset, window, c_close, has_pos, pos_dir, unreal, steps_n, peak_pct, dd_pct))
 
             if margin_call:
