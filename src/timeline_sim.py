@@ -436,17 +436,10 @@ class TimelineSimulator:
 
                     # Peak-PnL + steps tracking
                     tr["steps"] = tr.get("steps", 0) + 1
-                    # High/Low-based peak for trade analytics
                     current_peak = (c_high - tr["entry_price"]) if buy else (tr["entry_price"] - c_low)
                     if current_peak > tr.get("peak_pnl", 0.0):
                         tr["peak_pnl"] = current_peak
                         tr["peak_timestamp"] = current_ts
-                    # Close-based peak for v5 model state (training uses close, not high/low)
-                    close_pnl_pct = (c_close - tr["entry_price"]) / (tr["entry_price"] + 1e-8) * 100.0
-                    if not buy:
-                        close_pnl_pct = -close_pnl_pct
-                    if close_pnl_pct > tr.get("_peak_close_pct", 0.0):
-                        tr["_peak_close_pct"] = close_pnl_pct
 
                     hit_sl = (c_low <= tr["sl_price"]) if buy else (c_high >= tr["sl_price"])
                     hit_tp = (c_high >= tr["tp_price"]) if buy else (c_low <= tr["tp_price"])
@@ -516,10 +509,11 @@ class TimelineSimulator:
                             risk = abs(tr["entry_price"] - tr["sl_price"])
                             raw = (c_close - tr["entry_price"]) * pos_dir
                             unreal = raw / (risk + 1e-8)
-                        # v5 extras (close-based peak, matching training environment)
+                        # v5 extras
                         if self._vcfg.position_size == 6:
                             steps_n = min(tr.get("steps", 0) / 120.0, 1.0)
-                            peak_pct = tr.get("_peak_close_pct", 0.0)
+                            entry_p = tr["entry_price"] + 1e-8
+                            peak_pct = tr.get("peak_pnl", 0.0) / entry_p * 100.0
                             dd_pct = max(0.0, peak_pct - unreal)
                     states_to_infer.append((asset, window, c_close, has_pos, pos_dir, unreal, steps_n, peak_pct, dd_pct))
 
@@ -630,7 +624,6 @@ class TimelineSimulator:
                             "atr_pct_entry":   atr_pct_entry,
                             "peak_pnl":        0.0,
                             "peak_timestamp":  current_ts,
-                            "_peak_close_pct": 0.0,
                             "steps":           0,
                         }
 
