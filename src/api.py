@@ -30,6 +30,7 @@ _trade_event: asyncio.Event = asyncio.Event()
 _bot_state: dict = {"running": False}
 _bot_settings: dict = {
     "min_confidence": 8,
+    "min_close_confidence": 1,
     "assets": ["GOLD", "SILVER", "OIL_CRUDE", "NATURALGAS"],
     "risk_pct": 1.0,
     "leverage": 20,
@@ -711,6 +712,7 @@ def create_api() -> FastAPI:
         confidence_levels: list[int] | None = None
         min_q_spread: float = 0.0
         min_close_confidence: int = 1
+        close_confidence_levels: list[int] | None = None
         # Explicit model path (None = auto-select latest)
         model_path: str | None = None
         # Financial params (None = no financial tracking)
@@ -768,7 +770,7 @@ def create_api() -> FastAPI:
             db_path=input_db_path,
             confidence_levels=conf_levels,
             min_q_spread=body.min_q_spread,
-            min_close_confidence=body.min_close_confidence,
+            close_confidence_levels=body.close_confidence_levels or list(range(body.min_close_confidence, 11)),
             model_path=explicit_model,
             capital=body.capital,
             risk_pct=body.risk_pct,
@@ -803,7 +805,7 @@ def create_api() -> FastAPI:
             "confidence_threshold": body.confidence_threshold,
             "confidence_levels": conf_levels,
             "min_q_spread": body.min_q_spread,
-            "min_close_confidence": body.min_close_confidence,
+            "close_confidence_levels": body.close_confidence_levels or list(range(body.min_close_confidence, 11)),
             "capital": body.capital,
             "risk_pct": body.risk_pct,
             "leverage": body.leverage,
@@ -1412,13 +1414,15 @@ def create_api() -> FastAPI:
     @app.post("/api/bot/settings")
     async def update_bot_settings(body: dict):
         """Bot-Einstellungen aktualisieren."""
-        allowed = {"min_confidence", "assets", "risk_pct", "leverage", "sl_pct", "tp_pct"}
+        allowed = {"min_confidence", "min_close_confidence", "assets", "risk_pct", "leverage", "sl_pct", "tp_pct"}
         for k, v in body.items():
             if k in allowed:
                 _bot_settings[k] = v
         # Sync to config for live bot
         if "min_confidence" in body:
             config.MIN_CONFIDENCE_SCORE = int(body["min_confidence"])
+        if "min_close_confidence" in body:
+            config.MIN_CLOSE_CONFIDENCE_SCORE = int(body["min_close_confidence"])
         if "assets" in body:
             config.BOT_ACTIVE_ASSETS = body["assets"] if len(body["assets"]) < 4 else None
         return _bot_settings
@@ -1429,6 +1433,7 @@ def create_api() -> FastAPI:
         config.TRADING_ENABLED = True
         # Apply current settings to config
         config.MIN_CONFIDENCE_SCORE = int(_bot_settings.get("min_confidence", 8))
+        config.MIN_CLOSE_CONFIDENCE_SCORE = int(_bot_settings.get("min_close_confidence", 1))
         assets = _bot_settings.get("assets", [])
         config.BOT_ACTIVE_ASSETS = assets if len(assets) < 4 else None
         logger.info(

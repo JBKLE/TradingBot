@@ -214,6 +214,71 @@ st.markdown("---")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# BOT-EINSTELLUNGEN
+# ══════════════════════════════════════════════════════════════════════════════
+
+with st.expander("◈ BOT-EINSTELLUNGEN", expanded=False):
+    # Aktuelle Settings laden
+    _cur_settings = {}
+    try:
+        _sr = httpx.get(f"{BOT_API_URL}/api/bot/settings", timeout=5)
+        if _sr.status_code == 200:
+            _cur_settings = _sr.json()
+    except Exception:
+        pass
+
+    _sc1, _sc2, _sc3, _sc4 = st.columns(4)
+    with _sc1:
+        _set_conf = st.slider(
+            "Min. Confidence (Entry):",
+            1, 10, int(_cur_settings.get("min_confidence", 8)),
+            key="set_min_conf",
+        )
+    with _sc2:
+        _set_close_conf = st.slider(
+            "Min. Close-Confidence:",
+            1, 10, int(_cur_settings.get("min_close_confidence", 1)),
+            key="set_min_close_conf",
+        )
+    with _sc3:
+        _cur_assets = _cur_settings.get("assets", ["GOLD", "SILVER", "OIL_CRUDE", "NATURALGAS"])
+        _set_assets = st.multiselect(
+            "Aktive Assets:",
+            ["GOLD", "SILVER", "OIL_CRUDE", "NATURALGAS"],
+            default=_cur_assets,
+            key="set_assets",
+        )
+    with _sc4:
+        _set_risk = st.number_input(
+            "Risiko (%):", value=float(_cur_settings.get("risk_pct", 1.0)),
+            min_value=0.1, max_value=10.0, step=0.1, key="set_risk",
+        )
+
+    if st.button("◈ EINSTELLUNGEN SPEICHERN", use_container_width=True):
+        try:
+            _save_resp = httpx.post(
+                f"{BOT_API_URL}/api/bot/settings",
+                json={
+                    "min_confidence": _set_conf,
+                    "min_close_confidence": _set_close_conf,
+                    "assets": _set_assets,
+                    "risk_pct": _set_risk,
+                },
+                timeout=5,
+            )
+            if _save_resp.status_code == 200:
+                st.success("Einstellungen gespeichert!")
+                time.sleep(0.5)
+                st.rerun()
+            else:
+                st.error(f"Fehler: {_save_resp.status_code}")
+        except Exception as _e:
+            st.error(f"API-Fehler: {_e}")
+
+st.markdown("---")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # KPI ROW
 # ══════════════════════════════════════════════════════════════════════════════
 
