@@ -199,6 +199,10 @@ async def _process_dqn_signals(
 
         # ── CLOSE: Position schliessen (auch bei Kill-Switch!) ───────────
         if action == "CLOSE" and has_position:
+            close_conf = sig.get("confidence", 0)
+            if close_conf < config.MIN_CLOSE_CONFIDENCE_SCORE:
+                logger.debug("Skip CLOSE %s – confidence %d < %d", asset, close_conf, config.MIN_CLOSE_CONFIDENCE_SCORE)
+                continue
             pos = pos_by_epic[epic]
             await _close_position(broker, pos, asset, notifier)
             continue

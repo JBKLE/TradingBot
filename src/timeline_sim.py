@@ -64,6 +64,7 @@ class TimelineSimulator:
         confidence_threshold: int = DEFAULT_CONFIDENCE_THRESHOLD,
         confidence_levels: list[int] | None = None,
         min_q_spread: float = 0.0,
+        min_close_confidence: int = 1,
         model_path: str | None = None,
         models_dir: str | None = None,
         # Financial simulation parameters (None = no financial tracking)
@@ -80,6 +81,7 @@ class TimelineSimulator:
         self.output_db_path = output_db_path or db_path
         self.confidence_levels = confidence_levels or list(range(confidence_threshold, 11))
         self.min_q_spread = min_q_spread
+        self.min_close_confidence = min_close_confidence
         self._explicit_model_path = model_path  # wenn gesetzt, wird genau dieses Modell geladen
         self._models_dir = models_dir or config.AI_MODELS_DIR
         self._device = self._resolve_device()
@@ -545,7 +547,7 @@ class TimelineSimulator:
                     qf = self._extract_q_fields(q_raw)
 
                     # ── CLOSE: offene Position am Markt schliessen ───────
-                    if bot_action == "CLOSE" and asset in open_trades:
+                    if bot_action == "CLOSE" and asset in open_trades and confidence >= self.min_close_confidence:
                         tr  = open_trades[asset]
                         buy = tr["direction"] == "BUY"
                         pnl  = (c_close - tr["entry_price"]) if buy else (tr["entry_price"] - c_close)

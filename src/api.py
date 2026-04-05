@@ -710,6 +710,7 @@ def create_api() -> FastAPI:
         confidence_threshold: int = 8
         confidence_levels: list[int] | None = None
         min_q_spread: float = 0.0
+        min_close_confidence: int = 1
         # Explicit model path (None = auto-select latest)
         model_path: str | None = None
         # Financial params (None = no financial tracking)
@@ -767,6 +768,7 @@ def create_api() -> FastAPI:
             db_path=input_db_path,
             confidence_levels=conf_levels,
             min_q_spread=body.min_q_spread,
+            min_close_confidence=body.min_close_confidence,
             model_path=explicit_model,
             capital=body.capital,
             risk_pct=body.risk_pct,
@@ -801,6 +803,7 @@ def create_api() -> FastAPI:
             "confidence_threshold": body.confidence_threshold,
             "confidence_levels": conf_levels,
             "min_q_spread": body.min_q_spread,
+            "min_close_confidence": body.min_close_confidence,
             "capital": body.capital,
             "risk_pct": body.risk_pct,
             "leverage": body.leverage,

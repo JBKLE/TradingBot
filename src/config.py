@@ -67,6 +67,7 @@ BACKTEST_LEVERAGE: int = int(os.getenv("BACKTEST_LEVERAGE", "20"))
 # ── Trading parameters ─────────────────────────────────────────────────────────
 MAX_RISK_PER_TRADE_PCT: float = float(os.getenv("MAX_RISK_PER_TRADE_PCT", "2.0"))
 MIN_CONFIDENCE_SCORE: int = int(os.getenv("MIN_CONFIDENCE_SCORE", "8"))
+MIN_CLOSE_CONFIDENCE_SCORE: int = int(os.getenv("MIN_CLOSE_CONFIDENCE_SCORE", "1"))
 
 # Kill-switch – set TRADING_ENABLED=false to stop all trade execution
 TRADING_ENABLED: bool = os.getenv("TRADING_ENABLED", "false").lower() == "true"
@@ -157,6 +158,7 @@ def reload() -> None:
 
     g["MAX_RISK_PER_TRADE_PCT"] = float(os.getenv("MAX_RISK_PER_TRADE_PCT", "2.0"))
     g["MIN_CONFIDENCE_SCORE"] = int(os.getenv("MIN_CONFIDENCE_SCORE", "8"))
+    g["MIN_CLOSE_CONFIDENCE_SCORE"] = int(os.getenv("MIN_CLOSE_CONFIDENCE_SCORE", "1"))
     g["TRADING_ENABLED"] = os.getenv("TRADING_ENABLED", "true").lower() == "true"
 
     g["ANALYSIS_SCHEDULE"] = os.getenv("ANALYSIS_SCHEDULE", "0 8,12,16 * * 1-5")

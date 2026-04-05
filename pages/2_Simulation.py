@@ -61,7 +61,7 @@ with _ac2:
 with _ac3:
     _sim_end = st.date_input("Bis:", value=None, key="sim_end")
 
-_fc_col1, _fc_col2 = st.columns(2)
+_fc_col1, _fc_col2, _fc_col3 = st.columns(3)
 with _fc_col1:
     _sim_conf_levels = st.multiselect(
         "Confidence-Stufen:", list(range(1, 11)), default=list(range(1, 11)),
@@ -69,6 +69,8 @@ with _fc_col1:
     )
 with _fc_col2:
     _sim_q_spread = st.slider("Min. Q-Spread:", 0.0, 0.5, 0.0, step=0.01, key="sim_q_spread")
+with _fc_col3:
+    _sim_close_conf = st.slider("Min. Close-Confidence:", 1, 10, 1, key="sim_close_conf")
 
 # ── Finanz-Einstellungen ─────────────────────────────────────────────────
 sim_fin_enabled = st.checkbox("Finanzrechnung aktivieren", key="sim_fin_enabled")
@@ -94,6 +96,7 @@ if st.button("◈ SIMULATION STARTEN", type="primary", use_container_width=True)
         "assets": _sim_assets,
         "confidence_levels": _sim_conf_levels,
         "min_q_spread": _sim_q_spread,
+        "min_close_confidence": _sim_close_conf,
     }
     if _sim_start:
         _payload["start_date"] = str(_sim_start)
