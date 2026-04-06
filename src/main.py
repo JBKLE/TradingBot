@@ -200,10 +200,11 @@ async def _process_dqn_signals(
         # ── CLOSE: Position schliessen (auch bei Kill-Switch!) ───────────
         if action == "CLOSE" and has_position:
             close_conf = sig.get("confidence", 0)
-            if close_conf < config.MIN_CLOSE_CONFIDENCE_SCORE:
-                logger.debug("Skip CLOSE %s – confidence %d < %d", asset, close_conf, config.MIN_CLOSE_CONFIDENCE_SCORE)
-                continue
             pos = pos_by_epic[epic]
+            min_cc = config.CONF_BUY_CLOSE if pos.direction == Direction.BUY else config.CONF_SELL_CLOSE
+            if close_conf < min_cc:
+                logger.debug("Skip CLOSE %s – confidence %d < %d", asset, close_conf, min_cc)
+                continue
             await _close_position(broker, pos, asset, notifier)
             continue
 
@@ -243,8 +244,8 @@ async def _process_dqn_signals(
                 date=datetime.now().strftime("%Y-%m-%d"),
                 market_summary=f"DQN unified_tick: {asset}={action}({confidence}/10)",
                 best_opportunity=opp,
-                recommendation=Recommendation.TRADE if confidence >= config.MIN_CONFIDENCE_SCORE else Recommendation.WAIT,
-                wait_reason=f"Confidence {confidence} < {config.MIN_CONFIDENCE_SCORE}" if confidence < config.MIN_CONFIDENCE_SCORE else None,
+                recommendation=Recommendation.TRADE if confidence >= (config.CONF_BUY if action == "BUY" else config.CONF_SELL) else Recommendation.WAIT,
+                wait_reason=f"Confidence {confidence} < {config.CONF_BUY if action == 'BUY' else config.CONF_SELL}" if confidence < (config.CONF_BUY if action == "BUY" else config.CONF_SELL) else None,
                 tokens_used=0,
                 cost_usd=0.0,
             )

@@ -31,6 +31,10 @@ _bot_state: dict = {"running": False}
 _bot_settings: dict = {
     "min_confidence": 8,
     "min_close_confidence": 1,
+    "conf_buy": 8,
+    "conf_sell": 8,
+    "conf_buy_close": 1,
+    "conf_sell_close": 1,
     "assets": ["GOLD", "SILVER", "OIL_CRUDE", "NATURALGAS"],
     "risk_pct": 1.0,
     "leverage": 20,
@@ -713,6 +717,10 @@ def create_api() -> FastAPI:
         min_q_spread: float = 0.0
         min_close_confidence: int = 1
         close_confidence_levels: list[int] | None = None
+        conf_buy: int | None = None
+        conf_sell: int | None = None
+        conf_buy_close: int | None = None
+        conf_sell_close: int | None = None
         # Explicit model path (None = auto-select latest)
         model_path: str | None = None
         # Financial params (None = no financial tracking)
@@ -771,6 +779,10 @@ def create_api() -> FastAPI:
             confidence_levels=conf_levels,
             min_q_spread=body.min_q_spread,
             close_confidence_levels=body.close_confidence_levels or list(range(body.min_close_confidence, 11)),
+            conf_buy=body.conf_buy,
+            conf_sell=body.conf_sell,
+            conf_buy_close=body.conf_buy_close,
+            conf_sell_close=body.conf_sell_close,
             model_path=explicit_model,
             capital=body.capital,
             risk_pct=body.risk_pct,
@@ -806,6 +818,10 @@ def create_api() -> FastAPI:
             "confidence_levels": conf_levels,
             "min_q_spread": body.min_q_spread,
             "close_confidence_levels": body.close_confidence_levels or list(range(body.min_close_confidence, 11)),
+            "conf_buy": body.conf_buy,
+            "conf_sell": body.conf_sell,
+            "conf_buy_close": body.conf_buy_close,
+            "conf_sell_close": body.conf_sell_close,
             "capital": body.capital,
             "risk_pct": body.risk_pct,
             "leverage": body.leverage,
@@ -1414,7 +1430,7 @@ def create_api() -> FastAPI:
     @app.post("/api/bot/settings")
     async def update_bot_settings(body: dict):
         """Bot-Einstellungen aktualisieren."""
-        allowed = {"min_confidence", "min_close_confidence", "assets", "risk_pct", "leverage", "sl_pct", "tp_pct"}
+        allowed = {"min_confidence", "min_close_confidence", "conf_buy", "conf_sell", "conf_buy_close", "conf_sell_close", "assets", "risk_pct", "leverage", "sl_pct", "tp_pct"}
         for k, v in body.items():
             if k in allowed:
                 _bot_settings[k] = v
@@ -1423,6 +1439,9 @@ def create_api() -> FastAPI:
             config.MIN_CONFIDENCE_SCORE = int(body["min_confidence"])
         if "min_close_confidence" in body:
             config.MIN_CLOSE_CONFIDENCE_SCORE = int(body["min_close_confidence"])
+        for _ck in ("conf_buy", "conf_sell", "conf_buy_close", "conf_sell_close"):
+            if _ck in body:
+                setattr(config, _ck.upper(), int(body[_ck]))
         if "assets" in body:
             config.BOT_ACTIVE_ASSETS = body["assets"] if len(body["assets"]) < 4 else None
         return _bot_settings
@@ -1434,6 +1453,10 @@ def create_api() -> FastAPI:
         # Apply current settings to config
         config.MIN_CONFIDENCE_SCORE = int(_bot_settings.get("min_confidence", 8))
         config.MIN_CLOSE_CONFIDENCE_SCORE = int(_bot_settings.get("min_close_confidence", 1))
+        config.CONF_BUY = int(_bot_settings.get("conf_buy", 8))
+        config.CONF_SELL = int(_bot_settings.get("conf_sell", 8))
+        config.CONF_BUY_CLOSE = int(_bot_settings.get("conf_buy_close", 1))
+        config.CONF_SELL_CLOSE = int(_bot_settings.get("conf_sell_close", 1))
         assets = _bot_settings.get("assets", [])
         config.BOT_ACTIVE_ASSETS = assets if len(assets) < 4 else None
         logger.info(

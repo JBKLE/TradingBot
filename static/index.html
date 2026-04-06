@@ -526,12 +526,20 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
         <div class="card-hd"><span class="card-title">Bot-Einstellungen</span></div>
         <div class="form-grid mb14">
           <div class="f-field">
-            <label>Min. Konfidenz (1–10)</label>
-            <input type="number" id="trd-conf" value="8" min="1" max="10">
+            <label>Konf. BUY (1–10)</label>
+            <input type="number" id="trd-conf-buy" value="8" min="1" max="10">
           </div>
           <div class="f-field">
-            <label>Min. Close-Konfidenz (1–10)</label>
-            <input type="number" id="trd-close-conf" value="1" min="1" max="10">
+            <label>Konf. SELL (1–10)</label>
+            <input type="number" id="trd-conf-sell" value="8" min="1" max="10">
+          </div>
+          <div class="f-field">
+            <label>Konf. BUY Cancel (1–10)</label>
+            <input type="number" id="trd-conf-buy-close" value="1" min="1" max="10">
+          </div>
+          <div class="f-field">
+            <label>Konf. SELL Cancel (1–10)</label>
+            <input type="number" id="trd-conf-sell-close" value="1" min="1" max="10">
           </div>
           <div class="f-field">
             <label>Assets</label>
@@ -656,12 +664,20 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
             </div>
           </div>
           <div class="f-field">
-            <label>Min. Konfidenz (1–10)</label>
-            <input type="number" id="sim-conf" value="1" min="0" max="10">
+            <label>Konf. BUY (1–10)</label>
+            <input type="number" id="sim-conf-buy" value="1" min="0" max="10">
           </div>
           <div class="f-field">
-            <label>Min. Close-Konfidenz (1–10)</label>
-            <input type="number" id="sim-close-conf" value="1" min="0" max="10">
+            <label>Konf. SELL (1–10)</label>
+            <input type="number" id="sim-conf-sell" value="1" min="0" max="10">
+          </div>
+          <div class="f-field">
+            <label>Konf. BUY Cancel (1–10)</label>
+            <input type="number" id="sim-conf-buy-close" value="1" min="0" max="10">
+          </div>
+          <div class="f-field">
+            <label>Konf. SELL Cancel (1–10)</label>
+            <input type="number" id="sim-conf-sell-close" value="1" min="0" max="10">
           </div>
           <div class="f-field">
             <label for="sim-start">Start-Datum (leer = alle)</label>
@@ -1657,8 +1673,10 @@ function updateTrdAssetLabel() {
 async function loadTrdSettings() {
   try {
     const s = await apiFetch('/api/bot/settings');
-    if (s.min_confidence != null) document.getElementById('trd-conf').value = s.min_confidence;
-    if (s.min_close_confidence != null) document.getElementById('trd-close-conf').value = s.min_close_confidence;
+    if (s.conf_buy != null) document.getElementById('trd-conf-buy').value = s.conf_buy;
+    if (s.conf_sell != null) document.getElementById('trd-conf-sell').value = s.conf_sell;
+    if (s.conf_buy_close != null) document.getElementById('trd-conf-buy-close').value = s.conf_buy_close;
+    if (s.conf_sell_close != null) document.getElementById('trd-conf-sell-close').value = s.conf_sell_close;
     if (s.sl_pct != null) document.getElementById('trd-sl-pct').value = s.sl_pct;
     if (s.tp_pct != null) document.getElementById('trd-tp-pct').value = s.tp_pct;
     if (s.risk_pct != null) document.getElementById('trd-risk').value = s.risk_pct;
@@ -1676,8 +1694,10 @@ async function saveTrdSettings() {
   const assets = [...document.querySelectorAll('.trd-asset-cb')]
     .filter(c => c.checked).map(c => c.value);
   const body = {
-    min_confidence: parseInt(document.getElementById('trd-conf').value) || 8,
-    min_close_confidence: parseInt(document.getElementById('trd-close-conf').value) || 1,
+    conf_buy: parseInt(document.getElementById('trd-conf-buy').value) || 8,
+    conf_sell: parseInt(document.getElementById('trd-conf-sell').value) || 8,
+    conf_buy_close: parseInt(document.getElementById('trd-conf-buy-close').value) || 1,
+    conf_sell_close: parseInt(document.getElementById('trd-conf-sell-close').value) || 1,
     assets,
     sl_pct: parseFloat(document.getElementById('trd-sl-pct').value) || 999,
     tp_pct: parseFloat(document.getElementById('trd-tp-pct').value) || 999,
@@ -2138,8 +2158,10 @@ let _simLiveTrades   = {}; // id → trade object, for modal lookup
 
 async function startSim() {
   const assets = getSelectedSimAssets();
-  const conf      = parseInt(document.getElementById('sim-conf').value) ?? 1;
-  const closeConf = parseInt(document.getElementById('sim-close-conf').value) ?? 1;
+  const confBuy      = parseInt(document.getElementById('sim-conf-buy').value) ?? 1;
+  const confSell     = parseInt(document.getElementById('sim-conf-sell').value) ?? 1;
+  const confBuyClose = parseInt(document.getElementById('sim-conf-buy-close').value) ?? 1;
+  const confSellClose= parseInt(document.getElementById('sim-conf-sell-close').value) ?? 1;
   const start  = document.getElementById('sim-start').value || null;
   const end    = document.getElementById('sim-end').value   || null;
 
@@ -2152,7 +2174,7 @@ async function startSim() {
   const finOn = document.getElementById('sim-fin-toggle').checked;
   const modelPath = document.getElementById('sim-model').value || null;
   const body = {
-    assets, confidence_threshold: conf, min_close_confidence: closeConf,
+    assets, conf_buy: confBuy, conf_sell: confSell, conf_buy_close: confBuyClose, conf_sell_close: confSellClose,
     start_date: start, end_date: end,
     model_path: modelPath,
     input_db: inputDb, output_db: outputDb,
@@ -2175,7 +2197,7 @@ async function startSim() {
     _simLastInputDb = inputDb || 'simLastCharts.db';
     _simLastAssets  = assets && assets.length ? assets : ['GOLD','SILVER','OIL_CRUDE','NATURALGAS'];
     const modelName = modelPath ? modelPath.split('/').pop().split('\\').pop() : 'neuestes Modell';
-    addSimLog('ok', `Simulation gestartet · Modell: ${modelName} · Assets: ${assets?.join(',')||'alle'} · Conf ≥ ${conf} · Close-Conf ≥ ${closeConf} · SL ${(body.sl_pct*100).toFixed(2)}% · TP ${(body.tp_pct*100).toFixed(2)}% · DB-In: ${inputDb||'default'} · DB-Out: ${outputDb||'default'}`);
+    addSimLog('ok', `Simulation gestartet · Modell: ${modelName} · Assets: ${assets?.join(',')||'alle'} · BUY≥${confBuy} SELL≥${confSell} BUY-Cancel≥${confBuyClose} SELL-Cancel≥${confSellClose} · SL ${(body.sl_pct*100).toFixed(2)}% · TP ${(body.tp_pct*100).toFixed(2)}% · DB-In: ${inputDb||'default'} · DB-Out: ${outputDb||'default'}`);
     if (finOn) addSimLog('ok', `Finanzrechnung: ${body.capital}€ · Risiko ${(body.risk_pct*100).toFixed(1)}% · Hebel ${body.leverage}`);
     switchLog('sim');
     _simLiveTrades = {};

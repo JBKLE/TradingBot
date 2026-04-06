@@ -65,6 +65,10 @@ class TimelineSimulator:
         confidence_levels: list[int] | None = None,
         min_q_spread: float = 0.0,
         close_confidence_levels: list[int] | None = None,
+        conf_buy: int | None = None,
+        conf_sell: int | None = None,
+        conf_buy_close: int | None = None,
+        conf_sell_close: int | None = None,
         model_path: str | None = None,
         models_dir: str | None = None,
         # Financial simulation parameters (None = no financial tracking)
@@ -82,6 +86,11 @@ class TimelineSimulator:
         self.confidence_levels = confidence_levels or list(range(confidence_threshold, 11))
         self.min_q_spread = min_q_spread
         self.close_confidence_levels = close_confidence_levels or list(range(1, 11))
+        # Per-direction confidence thresholds (override generic levels if set)
+        self.conf_buy = conf_buy
+        self.conf_sell = conf_sell
+        self.conf_buy_close = conf_buy_close
+        self.conf_sell_close = conf_sell_close
         self._explicit_model_path = model_path  # wenn gesetzt, wird genau dieses Modell geladen
         self._models_dir = models_dir or config.AI_MODELS_DIR
         self._device = self._resolve_device()
@@ -547,7 +556,15 @@ class TimelineSimulator:
                     qf = self._extract_q_fields(q_raw)
 
                     # ── CLOSE: offene Position am Markt schliessen ───────
-                    if bot_action == "CLOSE" and asset in open_trades and confidence in self.close_confidence_levels:
+                    if bot_action == "CLOSE" and asset in open_trades:
+                        _tr_dir = open_trades[asset]["direction"]
+                        _min_cc = (self.conf_buy_close if _tr_dir == "BUY" else self.conf_sell_close) if self.conf_buy_close is not None else None
+                        if _min_cc is not None:
+                            _close_ok = confidence >= _min_cc
+                        else:
+                            _close_ok = confidence in self.close_confidence_levels
+                        if not _close_ok:
+                            continue
                         tr  = open_trades[asset]
                         buy = tr["direction"] == "BUY"
                         pnl  = (c_close - tr["entry_price"]) if buy else (tr["entry_price"] - c_close)
@@ -600,8 +617,14 @@ class TimelineSimulator:
 
                     # ── BUY/SELL: neuen Trade eroeffnen (nur wenn flat) ──
                     if bot_action in ("BUY", "SELL") and asset not in open_trades \
-                            and confidence in self.confidence_levels \
                             and qf["q_spread"] >= self.min_q_spread:
+                        _min_c = (self.conf_buy if bot_action == "BUY" else self.conf_sell) if self.conf_buy is not None else None
+                        if _min_c is not None:
+                            _entry_ok = confidence >= _min_c
+                        else:
+                            _entry_ok = confidence in self.confidence_levels
+                        if not _entry_ok:
+                            continue
                         direction = bot_action
                         trade_id += 1
                         sl = c_close * (1 - sl_pct) if direction == "BUY" else c_close * (1 + sl_pct)
